@@ -20,7 +20,83 @@ nonisolated public enum DocumentParser {
     options: DocumentParserOptions = DocumentParserOptions(),
     progress: ProgressHandler? = nil
   ) async throws -> DocumentParseResult {
-    try await parseInput(input, index: 0, options: options, progress: progress)
+    try await DocumentOCR.$sessions.withValue(DocumentOCRSessionPool()) {
+      try await parseInput(input, index: 0, options: options, progress: progress)
+    }
+  }
+
+  /// 여러 입력을 제한된 동시성으로 처리하고 입력과 같은 순서로 결과를 반환한다.
+  /// 개별 문서 실패는 failure에 남기며, 배치 전체 취소는 호출자에게 오류로 전파한다.
+  /// - Parameters:
+  ///   - inputs: 서로 다른 형식을 섞을 수 있는 원본 배열.
+  ///   - options: 문서 동시성과 배치 안에서 공유할 PDF 작업 예산.
+  ///   - progress: inputIndex로 문서를 구분하는 진행 콜백. 문서 간 이벤트는 섞일 수 있다.
+  /// - Returns: 입력 인덱스와 일대일로 대응하는 성공·실패 배열.
+  @concurrent public static func parseBatch(
+    _ inputs: [DocumentInput],
+    options: DocumentParserOptions = DocumentParserOptions(),
+    progress: ProgressHandler? = nil
+  ) async throws -> [DocumentBatchResult] {
+    try Task.checkCancellation()
+    if inputs.isEmpty { return [] }
+    let pool = DocumentPDFWorkPool(options: options)
+    return try await DocumentOCR.$sessions.withValue(DocumentOCRSessionPool()) {
+      try await DocumentPDFScheduling.$pool.withValue(pool) {
+        let results = try await runBatch(inputs, options: options, progress: progress)
+        let metrics = await pool.snapshot()
+        return results.map { outcome in
+          guard case .success(var result) = outcome else { return outcome }
+          result.metrics?.batchScheduling = metrics
+          return .success(result)
+        }
+      }
+    }
+  }
+
+  /// 작업이 끝날 때마다 다음 입력을 보충한다. 결과는 완료 순서 대신 원래 인덱스에 넣는다.
+  private static func runBatch(
+    _ inputs: [DocumentInput], options: DocumentParserOptions, progress: ProgressHandler?
+  ) async throws -> [DocumentBatchResult] {
+    var results = [DocumentBatchResult?](repeating: nil, count: inputs.count)
+    var nextIndex = 0
+    try await withThrowingTaskGroup(of: (Int, DocumentBatchResult).self) { group in
+      for _ in 0..<min(max(1, options.maximumConcurrentDocuments), inputs.count) {
+        let index = nextIndex
+        nextIndex += 1
+        group.addTask { [options] in
+          await parseBatchItem(inputs[index], index: index, options: options, progress: progress)
+        }
+      }
+      while let (index, result) = try await group.next() {
+        results[index] = result
+        try Task.checkCancellation()
+        guard nextIndex < inputs.count else { continue }
+        let next = nextIndex
+        nextIndex += 1
+        group.addTask { [options] in
+          await parseBatchItem(inputs[next], index: next, options: options, progress: progress)
+        }
+      }
+    }
+    return results.compactMap { $0 }
+  }
+
+  private static func parseBatchItem(
+    _ input: DocumentInput,
+    index: Int,
+    options: DocumentParserOptions,
+    progress: ProgressHandler?
+  ) async -> (Int, DocumentBatchResult) {
+    do {
+      let result = try await parseInput(input, index: index, options: options, progress: progress)
+      return (index, .success(result))
+    } catch is CancellationError {
+      return (index, .failure(.cancelled))
+    } catch let error as DocumentParsingError {
+      return (index, .failure(error))
+    } catch {
+      return (index, .failure(.malformedDocument))
+    }
   }
 
   /// 모든 형식의 성공 외 종료 경로를 모아 실패·취소 진행 이벤트를 일관되게 보낸다.
