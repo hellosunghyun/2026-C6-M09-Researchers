@@ -177,7 +177,12 @@ nonisolated public enum DocumentParser {
       return try DocumentRasterParser.parse(
         data, format: format, options: options, progress: progress)
     case .txt, .csv, .json, .xml, .rtf, .html, .markdown:
-      throw DocumentParsingError.unsupportedFormat
+      return try await DocumentTextParser.parse(
+        data,
+        format: format,
+        baseDirectory: baseDirectory,
+        options: options
+      )
     case .pdf:
       throw DocumentParsingError.unsupportedFormat
     case .docx, .xlsx, .pptx, .doc, .xls, .ppt:
