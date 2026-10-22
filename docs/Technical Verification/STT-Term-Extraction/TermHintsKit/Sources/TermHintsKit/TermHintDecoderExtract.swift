@@ -303,14 +303,10 @@ extension TermHintDecoder {
   private static func emitHints(
     _ input: ExtractionInput, _ merged: [MergedCandidate]
   ) -> [TermHint] {
-    var localMerged = merged
-    if let ranker = TermHintDecoder.reranker {
-      localMerged = ranker.reorder(localMerged, chars: input.chars, lang: input.language)
-    }
-    if TermHintDecoder.debugMerged { TermHintDecoder.lastMerged = localMerged }
+    if TermHintDecoder.debugMerged { TermHintDecoder.lastMerged = merged }
     var seen = Set<String>()
     var output: [TermHint] = []
-    for candidate in localMerged {
+    for candidate in merged {
       let localString = sliceStr(input.chars, candidate.start, candidate.end)
       let normalized = HintNorm.norm(localString)
       guard !normalized.isEmpty, !seen.contains(normalized) else { continue }

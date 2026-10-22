@@ -82,7 +82,6 @@ public enum TermHintDecoder {
   static let koCharngramHi = 10  // KO char-ngram 최대 길이
   static let defaultTau: [String: Float] = ["ko": 0.012, "en": 0.003]
   public static var knownTerms: Set<String>?  // 사전 일치 후보 보너스 대상 (norm 표면)
-  public static var reranker: GBReranker?  // 후보 재정렬 모델 (nil이면 순서 불변)
   public static var debugMerged = false
   public static var lastMerged: [MergedCandidate] = []
   public static var knownBonus: Float = 1.5
