@@ -45,7 +45,6 @@ public final class TermHintPipeline {
   public init(
     modelURL spm: URL, modelPackageURL pkg: URL, charVocabURL vocab: URL,
     knownTermsURL: URL? = nil,
-    rerankerURL: URL? = nil, substrDFURL: URL? = nil,
     sectionPriorityRulesURL: URL? = nil,
     koreanRulesURL: URL? = nil,
     configuration: MLModelConfiguration = .init(),
@@ -91,15 +90,6 @@ public final class TermHintPipeline {
       if let localEnd = localKindIndex["bonus"] as? NSNumber {
         TermHintDecoder.knownBonus = localEnd.floatValue
       }
-    }
-    if let rurl = rerankerURL, let localRank = GBReranker(jsonPath: rurl.path) {
-      TermHintDecoder.reranker = localRank
-    }
-    if let surl = substrDFURL,
-      let localStartData = try? Data(contentsOf: surl),
-      let localStartIndex = try? JSONSerialization.jsonObject(with: localStartData)
-        as? [String: NSNumber] {
-      GBReranker.substrDF = localStartIndex.mapValues { $0.doubleValue }
     }
   }
 

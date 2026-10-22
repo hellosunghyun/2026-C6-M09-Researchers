@@ -4,7 +4,6 @@
 
 - `TermHintsKit/`: 토크나이저·전처리·후보 추출·순위화 Swift Package
 - `Model/`: 임베딩 4비트 Core ML 모델과 필수 실행 자산
-- `Tools/compress_embedding.py`: 보존된 8비트 기준 모델에서 압축 후보 재현
 - `REPORT.md`: 수집부터 실기기 검증까지의 과정·결과·한계
 
 원문·학습 문서·라벨·체크포인트·후보 캐시는 포함하지 않는다. 기존 기준 모델과 잠금 테스트는 별도 연구 작업공간에 보존한다.
@@ -40,4 +39,6 @@ cd TermHintsKit
 swift test --scratch-path /tmp/labcord-stt-tv-build
 ```
 
-저장소 루트에서는 `swiftlint --strict`를 실행한다. 빌드 캐시는 작업공간 밖에 둔다. 외부 의존성은 없다. 압축 도구는 기존 `coremltools==9.0`과 NumPy 환경에서 `--source`와 `--output-dir`를 받아 원본을 덮어쓰지 않는다.
+저장소 루트에서는 `swiftlint --strict`를 실행한다. 빌드 캐시는 작업공간 밖에 둔다. 외부 의존성은 없다.
+
+과거 GB 랭커·재압축 도구는 포함하지 않는다. 압축 재현 코드와 전체 실험 기록은 별도 연구 작업공간에 보존한다.
