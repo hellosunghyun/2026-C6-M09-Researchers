@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		8E2E27333084877E0043EEB3 /* ResearchWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 8E2E27293084877E0043EEB3 /* ResearchWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D2A14CBF6A6E4A4A8F01C321 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = D2A14CBF6A6E4A4A8F01C323 /* SwiftSoup */; };
+		D2A14CBF6A6E4A4A8F01C324 /* OdrCore in Frameworks */ = {isa = PBXBuildFile; productRef = D2A14CBF6A6E4A4A8F01C328 /* OdrCore */; };
 		D2A14CBF6A6E4A4A8F01C325 /* CoreHwp in Frameworks */ = {isa = PBXBuildFile; productRef = D2A14CBF6A6E4A4A8F01C329 /* CoreHwp */; };
 /* End PBXBuildFile section */
 
@@ -88,6 +89,7 @@
 			isa = PBXFrameworksBuildPhase;
 			files = (
 				D2A14CBF6A6E4A4A8F01C321 /* SwiftSoup in Frameworks */,
+				D2A14CBF6A6E4A4A8F01C324 /* OdrCore in Frameworks */,
 				D2A14CBF6A6E4A4A8F01C325 /* CoreHwp in Frameworks */,
 			);
 		};
@@ -151,6 +153,7 @@
 			productReference = 8E0691153080743D0081547E /* Researchers.app */;
 			packageProductDependencies = (
 				D2A14CBF6A6E4A4A8F01C323 /* SwiftSoup */,
+				D2A14CBF6A6E4A4A8F01C328 /* OdrCore */,
 				D2A14CBF6A6E4A4A8F01C329 /* CoreHwp */,
 			);
 			productType = "com.apple.product-type.application";
@@ -227,6 +230,7 @@
 			packageReferences = (
 				8E3F0AEF3085C6E200F857AB /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
 				D2A14CBF6A6E4A4A8F01C322 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
+				D2A14CBF6A6E4A4A8F01C326 /* XCRemoteSwiftPackageReference "OpenDocument.core" */,
 				D2A14CBF6A6E4A4A8F01C327 /* XCRemoteSwiftPackageReference "hwp-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -615,6 +619,11 @@
 			};
 		};
 
+		D2A14CBF6A6E4A4A8F01C326 /* XCRemoteSwiftPackageReference "OpenDocument.core" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/opendocument-app/OpenDocument.core";
+			requirement = { kind = upToNextMajorVersion; minimumVersion = 7.4.0; };
+		};
 		D2A14CBF6A6E4A4A8F01C327 /* XCRemoteSwiftPackageReference "hwp-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sboh1214/hwp-swift.git";
@@ -630,6 +639,11 @@
 			productName = SwiftSoup;
 		};
 
+		D2A14CBF6A6E4A4A8F01C328 /* OdrCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D2A14CBF6A6E4A4A8F01C326 /* XCRemoteSwiftPackageReference "OpenDocument.core" */;
+			productName = OdrCore;
+		};
 		D2A14CBF6A6E4A4A8F01C329 /* CoreHwp */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D2A14CBF6A6E4A4A8F01C327 /* XCRemoteSwiftPackageReference "hwp-swift" */;
