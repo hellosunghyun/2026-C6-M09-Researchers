@@ -6,7 +6,7 @@
 | 실험실 소음 환경 음성 전사 | ☐ | @ryuhwagodong |  | • 장비 구동음 및 배기/물소리가 섞인 환경에서 발화 거리와 음량(SNR)별 전사 한계 측정 • 연구원이 -23dB 수준으로 작게 읊조릴 때의 전사 정확도 및 감쇄 한계 확인 | CoreAudio, Speech API, 노이즈 시뮬레이션 | P0 |
 | 워치 비접촉 백그라운드 제어 | ☑ | @junghongseop |  | • 라텍스 장갑 착용 상태에서 손동작/팔 흔들기 등 센서 모션으로 커스텀 마커 기록 가능 여부 검증 • 단축어 앱 연동 버그를 해결해 화면 꺼짐 상태에서도 백그라운드 즉각 녹음 구동 확인 | CoreMotion, App Intents, Siri Shortcuts, watchOS 백그라운드 태스크 | P0 |
 | 온디바이스 문서 파싱 | ☑ | @hellosunghyun |  | • 프로토콜 문서를 LLM이 이해하기 쉬운 JSON 구조로 변환하기 위함 • 온디바이스 파운데이션 모델의 입력 토큰 한계(4,096 토큰)를 대체할 소형 모델 성능 비교 | iPhone 로컬 구동 오픈소스 경량 모델 6종 | P0 |
-| 전문 용어 커스텀 STT | ☐ | @hellosunghyun |  | • 프로토콜 문서에서 시약명, 수치, 단위를 사전 추출하여 STT 가중치로 주입 • 실험 중 발화되는 복잡한 전문 학술 용어의 단어 오인식률(WER) 감소 검증 | Apple Speech Framework (Custom Vocabulary / Contextual Strings) | P0 |
+| 전문 용어 커스텀 STT | ☐ | @hellosunghyun |  | • 프로토콜 문서에서 시약명, 수치, 단위를 사전 추출하여 STT 가중치로 주입 • 실험 중 발화되는 복잡한 전문 학술 용어의 단어 오인식률(WER) 감소 검증 • 연구 기록: [STT-Term-Extraction](./STT-Term-Extraction/) | Apple Speech Framework (Custom Vocabulary / Contextual Strings) | P0 |
 | 저전력 화면 변화 자동 캡처 | ☑ | @junghongseop |  | • 상시 비디오 녹화로 인한 배터리 급방전 및 기기 발열 방지 • 화면 내 유의미한 움직임이나 시약 변화가 감지될 때만 타임스탬프와 함께 고화질 스냅샷 저장 | Vision Framework (모션/프레임 차이 분석), AVFoundation | P1 |
 | HomeKit 홈캠 연동 및 스냅샷 추출 | ☐ |  |  | • 별도 자체 서버 구축 없이 HomeKit 연동 카메라를 앱에 직접 연결 가능한지 검증 • Apple 암호화 저장소에서 실험 타임스탬프에 맞는 스냅샷 및 클립을 앱으로 가져올 수 있는지 확인 | HomeKit Framework, HomeKit Secure Video (HKSV) | P2 |
 | 기기 관리 및 데이터 격리 (MDM / BYOD) | ☐ |  |  | • 학교 공용 기기: 감독 모드를 통해 테스트 앱 무인 배포 및 필수 권한 제약 확인 • 개인 기기(BYOD): 사생활 침해 없이 분리된 업무용 암호화 볼륨에 연구 데이터만 격리 저장 | Apple School Manager(ASM), MDM 관리 프로파일, Apple User Enrollment | P2 |

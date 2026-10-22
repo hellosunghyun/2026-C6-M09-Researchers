@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [.library(name: "TermHintsKit", targets: ["TermHintsKit"])],
     targets: [
-        .target(name: "TermHintsKit")
+        .target(name: "TermHintsKit"),
+        .testTarget(name: "TermHintsKitTests", dependencies: ["TermHintsKit"])
     ]
 )
