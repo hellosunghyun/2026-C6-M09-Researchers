@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		8E2E27333084877E0043EEB3 /* ResearchWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 8E2E27293084877E0043EEB3 /* ResearchWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D2A14CBF6A6E4A4A8F01C325 /* CoreHwp in Frameworks */ = {isa = PBXBuildFile; productRef = D2A14CBF6A6E4A4A8F01C329 /* CoreHwp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,6 +85,7 @@
 		8E0691123080743D0081547E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				D2A14CBF6A6E4A4A8F01C325 /* CoreHwp in Frameworks */,
 			);
 		};
 		8E3F0AEF3085C6E200F857B5 /* Frameworks */ = {
@@ -145,6 +147,7 @@
 			productName = Researchers;
 			productReference = 8E0691153080743D0081547E /* Researchers.app */;
 			packageProductDependencies = (
+				D2A14CBF6A6E4A4A8F01C329 /* CoreHwp */,
 			);
 			productType = "com.apple.product-type.application";
 		};
@@ -219,6 +222,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8E3F0AEF3085C6E200F857AB /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
+				D2A14CBF6A6E4A4A8F01C327 /* XCRemoteSwiftPackageReference "hwp-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8E0691163080743D0081547E /* Products */;
@@ -598,11 +602,21 @@
 			};
 		};
 
+		D2A14CBF6A6E4A4A8F01C327 /* XCRemoteSwiftPackageReference "hwp-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sboh1214/hwp-swift.git";
+			requirement = { kind = upToNextMinorVersion; minimumVersion = 0.19.0; };
+		};
 
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 
+		D2A14CBF6A6E4A4A8F01C329 /* CoreHwp */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D2A14CBF6A6E4A4A8F01C327 /* XCRemoteSwiftPackageReference "hwp-swift" */;
+			productName = CoreHwp;
+		};
 
 /* End XCSwiftPackageProductDependency section */
 	};
