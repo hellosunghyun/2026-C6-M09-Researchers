@@ -1,98 +1,54 @@
 import Foundation
 import PDFKit
 
-/// 페이지를 순서대로 읽는 기본 PDF 파서. 표·삽입 그림 처리는 다음 PR에서 연결한다.
+/// PDF 열기·페이지 파이프라인·최종 결과 조합을 담당한다.
+/// 페이지 작업 완료 순서와 관계없이 페이지·좌표 순으로 블록을 정리한다.
 nonisolated enum DocumentPDFParser {
   static func parse(
-    _ data: Data, options: DocumentParserOptions, progress: DocumentParser.ProgressHandler?
+    _ data: Data,
+    options: DocumentParserOptions,
+    progress: DocumentParser.ProgressHandler?
   ) async throws -> DocumentParseResult {
-    guard let document = PDFDocument(data: data) else {
-      throw DocumentParsingError.malformedDocument
-    }
-    guard !document.isLocked else { throw DocumentParsingError.encryptedDocument }
-    guard document.pageCount > 0 else { throw DocumentParsingError.malformedDocument }
-    var blocks: [DocumentBlock] = []
-    var warnings: [DocumentWarning] = []
-    let count = min(document.pageCount, max(1, options.maximumDocumentPages))
-    for index in 0..<count {
-      try Task.checkCancellation()
-      do {
-        let pageBlocks = try autoreleasepool {
-          try extractPage(document.page(at: index), index: index,
-                          options: options, warnings: &warnings)
-        }
-        blocks.append(contentsOf: pageBlocks)
-      } catch is CancellationError {
-        throw CancellationError()
-      } catch {
-        warnings.append(.init(code: .extractionFailed,
-          message: "PDF page could not be extracted.", location: .init(page: index + 1)))
+    var timing = DocumentTiming()
+    let document = try timing.measure(.pdfOpen) {
+      guard let document = PDFDocument(data: data) else {
+        throw DocumentParsingError.malformedDocument
       }
-      progress?(.init(inputIndex: 0, phase: .recognizingText,
-        fractionCompleted: Double(index + 1) / Double(count)))
+      guard !document.isLocked else { throw DocumentParsingError.encryptedDocument }
+      guard document.pageCount > 0 else { throw DocumentParsingError.malformedDocument }
+      return document
     }
+    let count = min(document.pageCount, max(1, options.maximumDocumentPages))
+    var pipeline = DocumentPDFPipeline(document: document, options: options, origin: timing.origin)
+    let pages = try await pipeline.run(count: count, progress: progress)
+    try Task.checkCancellation()
+    let start = ContinuousClock.now
+    var blocks = pages.flatMap { $0.result.blocks }
+    let images = pages.flatMap { $0.result.images }
+    var warnings = pages.flatMap { $0.result.warnings }
     if count < document.pageCount {
-      warnings.append(.init(code: .resourceLimitReached,
-        message: "Remaining PDF pages exceeded the configured limit.",
-        location: .init(page: count + 1)))
+      warnings.append(DocumentWarning(
+        code: .resourceLimitReached, message: "Remaining PDF pages exceeded the configured limit.",
+        location: DocumentLocation(page: count + 1)))
+    }
+    blocks.sort {
+      if $0.location.page != $1.location.page {
+        return ($0.location.page ?? 0) < ($1.location.page ?? 0)
+      }
+      let left = $0.location.bounds ?? .zero
+      let right = $1.location.bounds ?? .zero
+      if left.minY != right.minY { return left.minY < right.minY }
+      return left.minX < right.minX
     }
     for index in blocks.indices { blocks[index].readingOrder = index }
-    return DocumentParseResult(format: .pdf, blocks: blocks, warnings: warnings)
-  }
-
-  /// 본문을 먼저 보존하고 OCR 실패는 해당 페이지의 경고로 남긴다.
-  private static func extractPage(
-    _ page: PDFPage?, index: Int, options: DocumentParserOptions,
-    warnings: inout [DocumentWarning]
-  ) throws -> [DocumentBlock] {
-    guard let page, let reference = page.pageRef else {
-      throw DocumentParsingError.malformedDocument
-    }
-    let space = DocumentPDFPageSpace(page: reference)
-    var native = nativeLines(page, index: index, space: space)
-    guard let raster = space.render(page, maximumPixels: options.maximumImagePixels) else {
-      warnings.append(.init(code: .resourceLimitReached,
-        message: "PDF page exceeded the rasterization limit.", location: .init(page: index + 1)))
-      return native
-    }
-    do {
-      let recognized = try DocumentOCR.recognize(image: raster, orientation: .up,
-        location: .init(page: index + 1))
-      native.append(contentsOf: recognized.filter { !duplicate($0, in: native) })
-    } catch is CancellationError {
-      throw CancellationError()
-    } catch {
-      warnings.append(.init(code: .imageOCRFailed,
-        message: "PDF page OCR could not be completed.", location: .init(page: index + 1)))
-    }
-    return native
-  }
-
-  private static func nativeLines(
-    _ page: PDFPage, index: Int, space: DocumentPDFPageSpace
-  ) -> [DocumentBlock] {
-    page.selection(for: space.page.getBoxRect(.mediaBox))?
-      .selectionsByLine().compactMap { line in
-        let text = (line.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-        return DocumentBlock(kind: .paragraph, text: text, readingOrder: 0,
-          location: .init(page: index + 1, bounds: space.normalized(line.bounds(for: page))))
-      } ?? []
-  }
-
-  /// 공간적으로 겹치는 본문과 같은 문자열만 중복 OCR로 제외한다.
-  private static func duplicate(_ candidate: DocumentBlock, in blocks: [DocumentBlock]) -> Bool {
-    guard let bounds = candidate.location.bounds else { return false }
-    let related = blocks.filter {
-      guard !$0.text.isEmpty, let other = $0.location.bounds else { return false }
-      return other.insetBy(dx: -0.005, dy: -0.005).intersects(bounds)
-    }
-    let value = normalized(candidate.text)
-    return value.isEmpty || related.contains { normalized($0.text) == value }
-      || normalized(related.map(\.text).joined()).contains(value)
-  }
-
-  private static func normalized(_ text: String) -> String {
-    text.lowercased().filter { !$0.isWhitespace }
+    var result = DocumentParseResult(
+      format: .pdf, blocks: blocks, warnings: warnings, images: images)
+    timing.record(.pdfAssembly, start: start)
+    result.metrics = DocumentParsingMetrics(
+      wallSeconds: DocumentTiming.seconds(timing.origin.duration(to: .now)),
+      peakInFlightPages: pipeline.peakPages, peakEstimatedWorkingBytes: pipeline.peakBytes,
+      timings: (timing.values + pages.flatMap { $0.timing.values } + pipeline.awaitTimings.values)
+        .sorted { $0.startOffsetSeconds < $1.startOffsetSeconds })
+    return result
   }
 }
