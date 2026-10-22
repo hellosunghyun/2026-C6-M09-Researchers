@@ -70,6 +70,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			explicitFolders = (
 				Fixtures/RealWorld,
+				Fixtures/Licenses,
 			);
 			path = ResearchersTests;
 			sourceTree = "<group>";
