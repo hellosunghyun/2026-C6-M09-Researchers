@@ -1,14 +1,6 @@
 {
-  "version": "text_heading_priority_fixed_v2_line_input",
-  "frozen_before_full_document_scores": true,
-  "input": "Parsed full text only; no gold offsets, segment annotations or publisher metadata",
-  "paragraph_boundary": "Single LF text lines; recognize exact one-line or adjacent two-line heading after whitespace collapse. Longer body prose never matches.",
   "max_heading_scalars": 120,
   "max_heading_words": 12,
   "start": "^(?:general\\s+)?(?:materials(?:\\s+(?:and|&)\\s+methods)?|methods|experimental(?:\\s+(?:section|details|procedures?))?|reagents(?:\\s+and\\s+materials)?|protocols?|procedures?|실험\\s*방법|재료\\s*및\\s*방법|실험\\s*절차|시험\\s*방법|실험\\s*재료|시약(?:\\s*및\\s*기구)?)$",
-  "stop": "^(?:introduction|results(?:\\s+and\\s+discussion)?|discussion|conclusions?|references|acknowledg(?:e)?ments?|supporting\\s+information(?:\\s+available)?|associated\\s+content|서론|결과(?:\\s*및\\s*고찰)?|고찰|결론|참고\\s*문헌)$",
-  "priority": "Candidates fully inside detected procedure ranges first; preserve actual baseline order within both groups",
-  "fallback": "If no procedure range detected, exact baseline order",
-  "scope": "Exploratory reused development data; never treat unknown gold outside selected scope as negative",
-  "revision_reason": "v1 assumed double LF paragraph boundaries; observed source serialization uses single LF, so v1 found zero headings. Input-format correction, not score threshold tuning."
+  "stop": "^(?:introduction|results(?:\\s+and\\s+discussion)?|discussion|conclusions?|references|acknowledg(?:e)?ments?|supporting\\s+information(?:\\s+available)?|associated\\s+content|서론|결과(?:\\s*및\\s*고찰)?|고찰|결론|참고\\s*문헌)$"
 }
