@@ -184,27 +184,6 @@ public struct MergedCandidate {
   }
 }
 
-struct TreeArrays {
-  let fields: [Int]
-  let thresholds: [Double]
-  let left: [Int]
-  let right: [Int]
-  let values: [Double]
-}
-
-struct RankFeatureContext {
-  let chars: [Unicode.Scalar]
-  let start: Int
-  let end: Int
-  let score: Float
-  let kind: String
-  let tier: Int
-  let positionFraction: Double
-  let overallFraction: Double
-  let topTerms: Set<String>
-  let knownTerms: Set<String>?
-}
-
 struct SafeToken {
   let start: Int
   let end: Int
