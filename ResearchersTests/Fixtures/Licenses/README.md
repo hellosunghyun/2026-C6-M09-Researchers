@@ -5,7 +5,8 @@
 
 파일별 원본 URL, 고정 커밋, SHA-256, 라이선스 근거, 기대 결과는
 [RealWorldManifest.json](../RealWorld/RealWorldManifest.json)에 있다.
-원본 파일은 변환·재인코딩하지 않았다. 이 폴더의 LICENSE·NOTICE와 HWP별 원본
+긴 텍스트 샘플의 발췌·서식 변경은 manifest의 `fixtureKind`·`transformation`에 기록한다.
+원격 원본 해시와 현재 파일 해시를 구분한다. 이 폴더의 LICENSE·NOTICE와 HWP별 원본
 README는 출처를 확인하고 고지를 보존하기 위한 사본이다.
 
 | 출처 | 적용 근거와 보존 파일 |
