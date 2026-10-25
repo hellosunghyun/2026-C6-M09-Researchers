@@ -62,4 +62,6 @@ watchOS 시작 화면은 기본 화면입니다. 손목 제스처·음성 기록
 - [@wondrone0113](https://github.com/wondrone0113)
 - [@ryuhwagodong](https://github.com/ryuhwagodong)
 - [@Seoyeon94](https://github.com/Seoyeon94)
-- [@by_zip](https://github.com/by_zip)
+
+기존 CODEOWNERS의 `by_zip`은 GitHub 프로필 조회에서 404가 반환되어 링크를 넣지
+않았습니다. 해당 팀원의 현재 GitHub 계정은 확인 후 추가할 예정입니다.
