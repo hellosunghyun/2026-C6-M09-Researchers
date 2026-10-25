@@ -57,3 +57,8 @@ Issue와 PR의 유형 라벨은 각 항목의 제목으로 결정한다. `feat: 
 
 별도 테스트 파일이나 전용 테스트 워크플로는 없다. 기존 Build·SwiftLint·Main Branch Guard와
 앱 XCTest/샘플은 변경하지 않는다.
+
+## 실동작 검증용 PR
+
+이 문단은 담당자·라벨 이벤트를 확인하는 검증용 Draft PR의 문서 차이이며,
+자동화 코드나 앱 동작을 변경하지 않는다. 검증 대상 계정은 hellosunghyun(데빈)이다.
