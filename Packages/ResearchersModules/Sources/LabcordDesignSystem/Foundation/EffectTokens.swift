@@ -1,17 +1,5 @@
-//
-//  EffectTokens.swift
-//  labcord-package-swift
-//
-//  Figma Semantic effect 수치 토큰
-//
-
 import CoreGraphics
 
-/// Blur와 shadow 수치의 Figma 원본 역할입니다.
-///
-/// Shadow 색상은 중복 API를 만들지 않고 `ColorToken`의 effect 색상 역할을 사용합니다.
-/// 실제 컴포넌트 바인딩 외부 Semantic 컬렉션에 존재하는 11개 수치는 원본 값과
-/// 일치하며, `blurSoftRadius`는 해당 컬렉션에 바인딩 행이 없어 로컬 Semantic 값을 유지합니다.
 public enum EffectToken: String, CaseIterable, Sendable {
     case blurSoftRadius = "Effect/Blur/Soft/Radius"
     case blurMediumRadius = "Effect/Blur/Medium/Radius"
@@ -27,7 +15,6 @@ public enum EffectToken: String, CaseIterable, Sendable {
     case shadowStrongSpread = "Effect/Shadow/Strong/Spread"
 }
 
-/// 현재 테마 맥락에 대응하는 blur와 shadow 수치입니다.
 public struct EffectTokens: Sendable {
     public let blurSoftRadius: CGFloat
     public let blurMediumRadius: CGFloat

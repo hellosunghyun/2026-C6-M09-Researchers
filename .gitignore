@@ -62,3 +62,8 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 
 .DS_Store
+/Packages/ResearchersModules/Tests/LabcordDesignSystemTests/
+/Packages/ResearchersModules/.swiftpm/xcode/xcshareddata/xcschemes/DesignSystem.xcscheme
+/scripts/design-system/
+/Packages/ResearchersModules/Sources/LabcordDesignSystem/Components/File.swift
+/Packages/ResearchersModules/.swiftpm/xcode/xcshareddata/xcschemes/Shared.xcscheme

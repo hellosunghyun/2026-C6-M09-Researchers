@@ -1,10 +1,3 @@
-//
-//  FontRegistration.swift
-//  labcord-package-swift
-//
-//  Created by 정홍섭 on 10/23/26.
-//
-
 import CoreText
 import Foundation
 
@@ -15,8 +8,6 @@ public enum FontRegistration {
     @discardableResult
     public static func register() -> Bool {
 #if os(watchOS)
-        // watchOS는 플랫폼 SF Pro를 사용하므로 패키지 리소스를 조회하거나
-        // 프로세스 수준의 폰트 등록을 수행하지 않습니다.
         return true
 #else
         if isRegistered { return true }

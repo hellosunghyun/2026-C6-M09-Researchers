@@ -1,15 +1,5 @@
-//
-//  ColorTokens.swift
-//  labcord-package-swift
-//
-//  Figma 색상 토큰과 SwiftUI ShapeStyle 연결
-//
-
 import SwiftUI
 
-/// 화면에서 사용하는 의미 기반 및 컴포넌트 전용 색상 역할입니다.
-///
-/// rawValue는 Figma 원본 이름을 그대로 보존합니다.
 public enum ColorToken: String, CaseIterable, Sendable {
     case backgroundPrimary = "Background/Primary"
     case backgroundSecondary = "Background/Secondary"
@@ -97,17 +87,12 @@ public enum ColorToken: String, CaseIterable, Sendable {
     case fillPrimaryBrand = "Fill/PrimaryBrand"
     case fillDark = "Fill/Dark"
     case fillInverse = "Fill/Inverse"
-    /// 이전 공개 API와 값을 보존하는 호환 역할입니다.
     case fillWhite = "Fill/White"
-    /// 이전 공개 API와 값을 보존하는 호환 역할입니다.
     case effectShadowStrong01 = "Effect/Shadow/Strong/01"
     case timelineMemoBackground = "Timeline/Memo/Background"
     case timerSheetGrabber = "Timer/Sheet/Grabber"
 }
 
-/// 현재 환경의 LabcordTheme에서 색상 역할을 해석하는 ShapeStyle입니다.
-///
-/// 사용 예: .foregroundStyle(.labcord(.labelPrimary))
 public struct LabcordColor: ShapeStyle, Sendable {
     public typealias Resolved = Color
 
@@ -356,13 +341,10 @@ private enum ColorTokenPalette {
 }
 
 extension LabcordTheme {
-    /// 테마의 고정 appearance를 기준으로 색상을 반환합니다.
-    /// .system은 View 밖에서 사용할 때 context를 fallback으로 사용합니다.
     public func color(_ token: ColorToken) -> Color {
         resolvedColor(token, colorScheme: nil)
     }
 
-    /// Environment의 colorScheme을 명시해 system appearance를 해석합니다.
     public func color(
         _ token: ColorToken,
         colorScheme: ColorScheme

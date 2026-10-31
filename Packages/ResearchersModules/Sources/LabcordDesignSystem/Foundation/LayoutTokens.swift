@@ -1,13 +1,5 @@
-//
-//  LayoutTokens.swift
-//  labcord-package-swift
-//
-//  Figma Foundation spacing과 radius 토큰
-//
-
 import CoreGraphics
 
-/// 반복 레이아웃 수치의 Figma 원본 역할입니다.
 public enum LayoutToken: String, CaseIterable, Sendable {
     case spacing2 = "spacing/2"
     case spacing4 = "spacing/4"
@@ -29,7 +21,6 @@ public enum LayoutToken: String, CaseIterable, Sendable {
     case timerItemHeight = "size/timer-item/height"
 }
 
-/// 테마와 함께 소비하는 레이아웃 토큰 값입니다.
 public struct LayoutTokens: Sendable {
     public let spacing2: CGFloat
     public let spacing4: CGFloat

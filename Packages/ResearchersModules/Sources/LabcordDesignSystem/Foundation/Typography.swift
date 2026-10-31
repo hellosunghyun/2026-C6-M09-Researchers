@@ -1,10 +1,3 @@
-//
-//  Typography.swift
-//  labcord-package-swift
-//
-//  Created by 정홍섭 on 10/23/26.
-//
-
 import SwiftUI
 
 @MainActor
@@ -58,7 +51,6 @@ public enum Typography {
     public static let footnoteBold = footnote.weight(.bold)
     public static let footnoteEmphasized = footnote.weight(.semibold)
 
-    /// Watch Footnote 2 at the `.large` baseline, preserving native Dynamic Type scaling.
     public static let footnote2 = TypographyStyle(
         font: .system(.footnote).scaled(by: 12.0 / 13.0),
         lineHeight: .variable,

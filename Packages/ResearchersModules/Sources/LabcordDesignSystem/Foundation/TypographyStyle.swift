@@ -1,10 +1,3 @@
-//
-//  TypographyStyle.swift
-//  labcord-package-swift
-//
-//  Created by 정홍섭 on 10/23/26.
-//
-
 import SwiftUI
 
 public struct TypographyStyle: ViewModifier {
@@ -32,8 +25,6 @@ public struct TypographyStyle: ViewModifier {
     }
 
     private var resolvedLineHeight: AttributedString.LineHeight {
-        // 기본 크기에서는 Figma 고정 행간을 유지하고, 그 외 크기에서는
-        // SwiftUI가 행간을 다시 계산해 글자가 겹치지 않도록 합니다.
         dynamicTypeSize == .large ? lineHeight : .variable
     }
 

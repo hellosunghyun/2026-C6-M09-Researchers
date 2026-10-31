@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// 정지 상태의 토큰·배치를 유지하며 상호작용의 탄성과 속도를 공유합니다.
 package enum LabcordMotion: Sendable {
     case press
     case release
@@ -82,7 +81,6 @@ private struct LabcordPressModifier: ViewModifier {
     }
 }
 
-/// 화면 인스턴스당 한 번만 실행하며 스크롤·시트 복귀 때 재시작하지 않습니다.
 private struct LabcordEntranceModifier: ViewModifier {
     @State private var hasAppeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
