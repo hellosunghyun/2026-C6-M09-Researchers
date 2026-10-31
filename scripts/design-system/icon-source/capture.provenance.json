@@ -1,0 +1,31 @@
+{
+  "slug": "capture",
+  "publicSwiftCase": "capture",
+  "sourceType": "Figma live direct main-component SVG export; byte-preserved24x24",
+  "fileKey": "v6cxQ2I6zURWYQaG5pnuBL",
+  "pageId": "697:9676",
+  "nodeId": "1208:14001",
+  "nodeName": "Icon/Capture",
+  "componentKey": "aa88fbc3964350da7bf4def8dd2d286bfaae9c5e",
+  "retrievedAtUTC": "2026-10-27T15:33:27.397962+00:00",
+  "remoteVersionId": "not supplied; live observation, not a frozen.fig revision claim",
+  "viewBox": "0 0 24 24",
+  "svgSHA256": "3652919f3df102592e898a0a479935462112df57c1cd1f3bd1cea232cda5d5e0",
+  "sourceSVGFile": "capture.svg",
+  "sourceResponseArtifact": "/Users/hellosunghyun/Developer/Labcord-DesignSystem-QA-2026-10-27/final-figma-update/completion-audit/full-visual-comparison/use-figma-title-record-properties-response.json",
+  "previousSource": {
+    "type": "previous frozen.fig-derived capture path",
+    "sha256": "cf78b2073503cd0cfdc98be812d734ccc61e955caf90e8279013d465db908939",
+    "preservedAt": "/Users/hellosunghyun/Developer/Labcord-DesignSystem-QA-2026-10-27/final-figma-update/completion-audit/full-visual-comparison/refinements/before-sources/capture.svg"
+  },
+  "generator": "scripts/design-system/generate-icons.py",
+  "generatedArtifacts": [
+    "labcord-symbol-capture.symbolset/labcord-symbol-capture.svg",
+    "labcord-artwork-capture.imageset/labcord-artwork-capture.svg"
+  ],
+  "other41SVGInputsChanged": false,
+  "publicAPIChanged": false,
+  "capturedAtUTC": "2026-10-27T15:33:27.397962+00:00",
+  "oldFrozenSnapshotSHA256": "1c41ef1683052de353ef1d4d8976e340c79d88fae4fa2399b0300063807a70e7",
+  "differenceFromFrozenSource": "CurrentIcon/Capture master1208:14001 isviewfinderwithfilledsquare. PriorSVG containedcamera/lensdetail; publiccasecapture retained. OnlythisliveSVGhasnewprovenance;other41inputsunchanged."
+}

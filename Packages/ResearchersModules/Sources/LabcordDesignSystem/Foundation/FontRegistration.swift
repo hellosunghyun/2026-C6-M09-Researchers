@@ -14,6 +14,11 @@ public enum FontRegistration {
 
     @discardableResult
     public static func register() -> Bool {
+#if os(watchOS)
+        // watchOS는 플랫폼 SF Pro를 사용하므로 패키지 리소스를 조회하거나
+        // 프로세스 수준의 폰트 등록을 수행하지 않습니다.
+        return true
+#else
         if isRegistered { return true }
 
         guard let url = Bundle.module.url(
@@ -23,9 +28,27 @@ public enum FontRegistration {
             return false
         }
 
-        isRegistered = CTFontManagerRegisterFontsForURL(
-            url as CFURL, .process, nil
+        var registrationError: Unmanaged<CFError>?
+        let didRegister = CTFontManagerRegisterFontsForURL(
+            url as CFURL,
+            .process,
+            &registrationError
         )
-        return isRegistered
+
+        if didRegister {
+            isRegistered = true
+            return true
+        }
+
+        guard let registrationError else { return false }
+        let error = registrationError.takeUnretainedValue()
+        let isAlreadyRegistered = CFEqual(
+            CFErrorGetDomain(error),
+            kCTFontManagerErrorDomain
+        ) && CFErrorGetCode(error) == CTFontManagerError.alreadyRegistered.rawValue
+
+        isRegistered = isAlreadyRegistered
+        return isAlreadyRegistered
+#endif
     }
 }
