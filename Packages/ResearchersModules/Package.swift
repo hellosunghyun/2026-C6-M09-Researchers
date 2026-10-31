@@ -70,6 +70,10 @@ let package = Package(
                 .defaultIsolation(MainActor.self),
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .testTarget(
+            name: "LabcordDesignSystemTests",
+            dependencies: ["LabcordDesignSystem"]
         )
     ]
 )
