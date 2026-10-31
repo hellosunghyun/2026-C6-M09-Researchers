@@ -1,6 +1,5 @@
 import Foundation
 
-/// 설정 시간의 앞부분과 마지막 단위를 서로 다른 글자 스타일로 표시할 때 사용합니다.
 public struct TimerDurationComponents: Equatable, Sendable {
     public let value: String
     public let unit: String
@@ -8,10 +7,6 @@ public struct TimerDurationComponents: Equatable, Sendable {
     public var text: String { value + unit }
 }
 
-/// 설정 시간을 단위별 한국어 문구로 표시하는 Foundation FormatStyle입니다.
-///
-/// 입력 범위 검증은 호출부가 소유하며, 이 스타일은 값을 저장하거나 보정하지 않습니다.
-/// 초 미만은 표시하지 않으며 단위 문자열은 현재 원본의 한국어를 사용합니다.
 public struct TimerDurationFormatStyle: FormatStyle, Sendable {
     public init() { }
 
@@ -36,7 +31,6 @@ public struct TimerDurationFormatStyle: FormatStyle, Sendable {
     }
 }
 
-/// 남은 시간을 호출부가 선택한 고정 자릿수로 표시하는 시계 형식입니다.
 public struct TimerClockFormatStyle: FormatStyle, Sendable {
     public let includesHours: Bool
 
