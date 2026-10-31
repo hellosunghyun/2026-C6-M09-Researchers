@@ -41,6 +41,7 @@ public struct LabcordButtonStyle: ButtonStyle {
     private struct ButtonContent: View {
         @Environment(\.controlSize) private var controlSize
         @Environment(\.isEnabled) private var isEnabled
+        @ScaledMetric(relativeTo: .body) private var cornerRadiusScale: CGFloat = 1
 
         let configuration: ButtonStyleConfiguration
         let variant: Variant
@@ -68,7 +69,10 @@ public struct LabcordButtonStyle: ButtonStyle {
         }
 
         private var buttonShape: RoundedRectangle {
-            RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
+            RoundedRectangle(
+                cornerRadius: min(metrics.cornerRadius, metrics.height / 2 * cornerRadiusScale),
+                style: .continuous
+            )
         }
 
         private var horizontalPadding: CGFloat {
