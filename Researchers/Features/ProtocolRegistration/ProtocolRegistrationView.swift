@@ -90,7 +90,7 @@ struct ProtocolRegistrationView: View {
                         .font(.footnote)
                 }
                 if !store.successfulResults.isEmpty, store.analysisID == nil {
-                    Button("분석 결과 보기") { showReviewConfirmation = true }
+                    Button("분석 결과 보기", action: requestReview)
                         .buttonStyle(.labcord(.accent, size: .medium))
                 }
                 Button {
@@ -127,6 +127,10 @@ struct ProtocolRegistrationView: View {
             if store.analysisID != nil {
                 ProtocolAnalysisProgressView(
                     phase: store.analysisPhase,
+                    inputName: store.analysisInput?.name,
+                    inputNumber: store.analysisInputNumber,
+                    inputCount: store.selectedInputs.count,
+                    startedAt: store.analysisStartedAt,
                     isCancelling: store.analysisCancellationRequested
                 ) {
                     showSkipConfirmation = true
@@ -134,6 +138,11 @@ struct ProtocolRegistrationView: View {
                 .background(Color(
                     "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
                 ))
+            } else if store.showsAnalysisCompletion {
+                ProtocolAnalysisCompletionView(onReview: requestReview)
+                    .background(Color(
+                        "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
+                    ))
             }
         }
         .alert("실험을 저장하지 못했어요", isPresented: Binding(
@@ -202,7 +211,7 @@ struct ProtocolRegistrationView: View {
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) {
             if store.analysisID == nil {
-                NavigationPageTitle("실험 등록") {
+                NavigationPageTitle(store.showsAnalysisCompletion ? "" : "실험 등록") {
                     if store.selectedInputs.isEmpty {
                         store.send(.backTapped)
                     } else {
@@ -243,6 +252,14 @@ private extension ProtocolRegistrationView {
         return messages.joined(separator: " ")
     }
 
+    func requestReview() {
+        if store.requiresReviewConfirmation {
+            showReviewConfirmation = true
+        } else {
+            store.send(.showReview)
+        }
+    }
+
     func analyze() {
         guard store.analysisID == nil, !store.importing, !store.isSaving else { return }
         let retainedInputs = store.pendingInputs
@@ -259,17 +276,30 @@ private extension ProtocolRegistrationView {
             defer { withExtendedLifetime(retainedInputs) {} }
             let results: [ProtocolAnalysisItem]?
             do {
-                let parsed = inputs.isEmpty ? [] : try await analysisClient.parse(inputs, nil)
+                let parsed = inputs.isEmpty ? [] : try await analysisClient.parseReportingProgress(
+                    inputs
+                ) { [store] inputID, phase in
+                    await MainActor.run {
+                        store.send(.analysisReadingProgress(id, inputID, phase))
+                    }
+                }
                 results = cachedResults + parsed
             } catch {
                 results = cachedResults.isEmpty ? nil : cachedResults
             }
             var terms: [UUID: ProtocolExtractedTerms] = [:]
             if let results, !Task.isCancelled {
-                store.send(.analysisPhaseChanged(id, .extractingTerms))
                 for item in results {
                     guard !Task.isCancelled, let text = item.extractedText else { continue }
-                    terms[item.id] = try? await termClient.extract(text)
+                    store.send(.analysisInputChanged(id, item.id))
+                    store.send(.analysisPhaseChanged(id, item.id, .termsPending))
+                    terms[item.id] = try? await termClient.extractWithProgress(
+                        text
+                    ) { [store] phase in
+                        await MainActor.run {
+                            store.send(.analysisPhaseChanged(id, item.id, .terms(phase)))
+                        }
+                    }
                 }
             }
             guard store.analysisID == id else { return }

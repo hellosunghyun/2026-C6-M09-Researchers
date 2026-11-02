@@ -1,8 +1,13 @@
 import LabcordDesignSystem
+import LabcordiOS
 import SwiftUI
 
 struct ProtocolAnalysisProgressView: View {
     let phase: ProtocolAnalysisPhase
+    let inputName: String?
+    let inputNumber: Int?
+    let inputCount: Int
+    let startedAt: Date?
     let isCancelling: Bool
     let onCancel: () -> Void
 
@@ -10,7 +15,27 @@ struct ProtocolAnalysisProgressView: View {
         if isCancelling { return "분석 취소 중..." }
         switch phase {
         case .reading: return "프로토콜을 읽고 있어요"
-        case .extractingTerms: return "타이머와 용어를 찾고 있어요"
+        case let .readingDocument(phase):
+            switch phase {
+            case .identifying: return "파일 형식을 확인하고 있어요"
+            case .extracting: return "문서에서 본문을 읽고 있어요"
+            case .recognizingText: return "사진과 스캔 문자의 글자를 읽고 있어요"
+            case .completed, .failed: return "문서 처리 결과를 확인하고 있어요"
+            case .cancelled: return "분석 취소 중..."
+            }
+        case .termsPending: return "용어 분석을 시작하고 있어요"
+        case let .terms(progress):
+            switch progress {
+            case .preparingExtraction: return "용어 추출을 준비하고 있어요"
+            case .extractingCandidates: return "본문에서 용어 후보를 찾고 있어요"
+            case .preparingRanking: return "용어 검토를 준비하고 있어요"
+            case let .rankingCandidates(count):
+                return "용어 후보 \(count.formatted())개를 검토하고 있어요"
+            case let .classifyingTerms(completed, total):
+                return "추출한 용어를 분류하고 있어요 · \(completed)/\(total)개 확인"
+            case .organizingTerms: return "용어 분류 결과를 정리하고 있어요"
+            }
+
         }
     }
 
@@ -51,6 +76,31 @@ struct ProtocolAnalysisProgressView: View {
                             "General/Fill/Primary", bundle: LabcordDesignSystemResources.bundle
                         ), in: Capsule())
                         .padding(.top, 48)
+
+                    if let inputName {
+                        VStack(spacing: 4) {
+                            if let inputNumber {
+                                Text("문서 \(inputNumber)/\(inputCount)")
+                                    .typography(Typography.subheadline)
+                            }
+                            Text(inputName)
+                                .typography(Typography.subheadline)
+                                .lineLimit(2)
+                        }
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 16)
+                    }
+                    if let startedAt {
+                        TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                            let seconds = max(0, Int(context.date.timeIntervalSince(startedAt)))
+                            Text(String(format: "경과 시간 %d:%02d", seconds / 60, seconds % 60))
+                                .typography(Typography.subheadline)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 12)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 16)
@@ -75,5 +125,37 @@ struct ProtocolAnalysisProgressView: View {
             .padding(.vertical, 16)
         }
         .accessibilityIdentifier("protocol-analysis-progress")
+    }
+}
+
+struct ProtocolAnalysisCompletionView: View {
+    let onReview: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 48) {
+                    ProgressRing(value: 1)
+                    VStack(spacing: 8) {
+                        Text("프로토콜 분석 완료")
+                            .typography(Typography.title3SemiBold)
+                        Text("결과를 확인해 보세요.")
+                            .typography(Typography.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+            }
+            Button(action: onReview) {
+                Text("분석 결과 보기").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.labcord(.primary, size: .large))
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+        }
+        .accessibilityIdentifier("protocol-analysis-completed")
     }
 }

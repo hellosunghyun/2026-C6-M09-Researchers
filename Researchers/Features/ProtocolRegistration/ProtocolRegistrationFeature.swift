@@ -10,7 +10,9 @@ nonisolated enum ProtocolSource: String, Equatable, Sendable {
 
 nonisolated enum ProtocolAnalysisPhase: Equatable, Sendable {
     case reading
-    case extractingTerms
+    case readingDocument(ProtocolReadingPhase)
+    case termsPending
+    case terms(ProtocolTermProgress)
 }
 
 @Reducer
@@ -25,11 +27,22 @@ struct ProtocolRegistrationFeature {
         var importedFile: ImportedProtocolInput?
         var analysisID: UUID?
         var analysisPhase = ProtocolAnalysisPhase.reading
+        var analysisStartedAt: Date?
+        var analysisInputID: UUID?
+        var showsAnalysisCompletion = false
         var analysisCancellationRequested = false
         var analysisResults: [UUID: ProtocolAnalysisItem] = [:]
         /// 분석에 성공한 문서별 추출 용어입니다. 추출에 실패한 문서는 값이 없습니다.
         var analysisTerms: [UUID: ProtocolExtractedTerms] = [:]
         var analysisFailed = false
+
+        var analysisInput: ImportedProtocolInput? {
+            selectedInputs.first { $0.id == analysisInputID }
+        }
+
+        var analysisInputNumber: Int? {
+            selectedInputs.firstIndex { $0.id == analysisInputID }.map { $0 + 1 }
+        }
 
         var selectedInputs: [ImportedProtocolInput] {
             importedPhotos + (importedFile.map { [$0] } ?? [])
@@ -58,6 +71,12 @@ struct ProtocolRegistrationFeature {
                 }
                 return item
             }
+        }
+
+        var requiresReviewConfirmation: Bool {
+            !pendingParsingInputs.isEmpty || termExtractionFailed
+                || successfulResults.contains(where: \.hasWarnings)
+                || analysisTerms.values.contains(where: \.usedFallback)
         }
 
         var termExtractionFailed: Bool {
@@ -104,7 +123,9 @@ struct ProtocolRegistrationFeature {
         case removePhoto(UUID)
         case removeFile
         case startAnalysis(UUID)
-        case analysisPhaseChanged(UUID, ProtocolAnalysisPhase)
+        case analysisPhaseChanged(UUID, UUID, ProtocolAnalysisPhase)
+        case analysisInputChanged(UUID, UUID)
+        case analysisReadingProgress(UUID, UUID, ProtocolReadingPhase)
         case cancelAnalysis
         case analysisFinished(UUID, [ProtocolAnalysisItem]?, [UUID: ProtocolExtractedTerms])
         case showReview
@@ -205,16 +226,38 @@ struct ProtocolRegistrationFeature {
                 guard state.analysisID == nil, !state.importing, !state.isSaving,
                       !state.pendingInputs.isEmpty else { return .none }
                 state.analysisID = id
+                state.analysisStartedAt = now
+                state.analysisInputID = state.pendingInputs.first?.id
+                state.showsAnalysisCompletion = false
                 state.analysisPhase = .reading
                 state.analysisCancellationRequested = false
                 state.analysisFailed = false
                 return .none
 
-            case let .analysisPhaseChanged(id, phase):
-                guard state.analysisID == id, !state.analysisCancellationRequested else {
+            case let .analysisPhaseChanged(id, inputID, phase):
+                guard state.analysisID == id, !state.analysisCancellationRequested,
+                      state.selectedInputs.contains(where: { $0.id == inputID }) else {
                     return .none
                 }
+                state.analysisInputID = inputID
                 state.analysisPhase = phase
+                return .none
+
+            case let .analysisInputChanged(id, inputID):
+                guard state.analysisID == id, !state.analysisCancellationRequested,
+                      state.selectedInputs.contains(where: { $0.id == inputID }) else {
+                    return .none
+                }
+                state.analysisInputID = inputID
+                return .none
+
+            case let .analysisReadingProgress(id, inputID, phase):
+                guard state.analysisID == id, !state.analysisCancellationRequested,
+                      state.selectedInputs.contains(where: { $0.id == inputID }) else {
+                    return .none
+                }
+                state.analysisInputID = inputID
+                state.analysisPhase = .readingDocument(phase)
                 return .none
 
             case .cancelAnalysis:
@@ -225,6 +268,8 @@ struct ProtocolRegistrationFeature {
             case let .analysisFinished(id, items, terms):
                 guard state.analysisID == id else { return .none }
                 state.analysisID = nil
+                state.analysisStartedAt = nil
+                state.analysisInputID = nil
                 state.analysisPhase = .reading
                 if state.analysisCancellationRequested {
                     state.analysisCancellationRequested = false
@@ -240,6 +285,8 @@ struct ProtocolRegistrationFeature {
                     state.analysisTerms[item.id] = terms[item.id]
                 }
                 state.analysisFailed = !state.pendingInputs.isEmpty
+                state.showsAnalysisCompletion = !state.successfulResults.isEmpty
+                    && state.pendingInputs.isEmpty
                 return .none
 
             case .saveSucceeded:
@@ -257,6 +304,9 @@ private extension ProtocolRegistrationFeature.State {
         importedPhotos = []
         importedFile = nil
         analysisID = nil
+        analysisStartedAt = nil
+        analysisInputID = nil
+        showsAnalysisCompletion = false
         analysisCancellationRequested = false
         analysisResults = [:]
         analysisTerms = [:]
@@ -265,6 +315,7 @@ private extension ProtocolRegistrationFeature.State {
     }
 
     mutating func clearAnalysis(for id: UUID) {
+        showsAnalysisCompletion = false
         analysisResults[id] = nil
         analysisTerms[id] = nil
     }
