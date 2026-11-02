@@ -27,13 +27,19 @@ struct ProtocolReviewView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Button {
-                store.send(.registerTapped)
-            } label: {
-                Text("실험 등록").frame(maxWidth: .infinity)
+            VStack(spacing: 8) {
+                if store.hasUncommittedTerm {
+                    Text("입력한 용어를 추가하거나 지운 뒤 등록해 주세요.")
+                        .typography(Typography.subheadline)
+                }
+                Button {
+                    store.send(.registerTapped)
+                } label: {
+                    Text("실험 등록").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.labcord(.primary, size: .large))
+                .disabled(!store.titleValid || store.hasUncommittedTerm)
             }
-            .buttonStyle(.labcord(.primary, size: .large))
-            .disabled(!store.titleValid)
             .padding(16)
             .background(Color(
                 "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle

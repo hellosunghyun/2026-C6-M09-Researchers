@@ -150,7 +150,8 @@ struct AppFeature {
 
             case let .path(.element(id: id, action: .review(.registerTapped))):
                 guard !state.reviewSaving, state.path.ids.last == id,
-                      let review = state.path[id: id, case: \.review], review.titleValid else {
+                      let review = state.path[id: id, case: \.review], review.titleValid,
+                      !review.hasUncommittedTerm else {
                     return .none
                 }
                 let procedure = ExperimentProtocol(

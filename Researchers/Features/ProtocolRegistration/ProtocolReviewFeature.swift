@@ -35,6 +35,10 @@ struct ProtocolReviewFeature {
         var titleValid: Bool {
             !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && title.count <= 60
         }
+
+        var hasUncommittedTerm: Bool {
+            !termInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     enum Action: Equatable {
@@ -62,10 +66,14 @@ struct ProtocolReviewFeature {
                 if isExpanded {
                     state.expanded.insert(category)
                 } else {
+                    guard state.inputCategory != category || !state.hasUncommittedTerm else {
+                        return .none
+                    }
                     state.expanded.remove(category)
                     if state.inputCategory == category { state.inputCategory = nil }
                 }
             case let .editTerm(category):
+                guard !state.hasUncommittedTerm else { return .none }
                 state.inputCategory = category
                 state.termInput = ""
                 state.termError = nil
@@ -88,6 +96,7 @@ struct ProtocolReviewFeature {
                 state.termInput = ""
                 state.termError = nil
             case .endTermEditing:
+                guard !state.hasUncommittedTerm else { return .none }
                 state.inputCategory = nil
                 state.termInput = ""
                 state.termError = nil
