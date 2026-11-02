@@ -38,28 +38,36 @@ nonisolated public enum ProtocolTermClassifier {
     private static let contextLimit = 1_200
 
     public static func classify(
-        _ terms: [String], context: String
+        _ terms: [String], context: String, progress: ProtocolTermClient.Progress? = nil
     ) async throws -> ProtocolExtractedTerms {
         try Task.checkCancellation()
-        guard !terms.isEmpty else { return ProtocolExtractedTerms() }
+        guard !terms.isEmpty else {
+            await progress?(.organizingTerms)
+            try Task.checkCancellation()
+            return ProtocolExtractedTerms()
+        }
         var labels: [String: ProtocolTermLabel.Category] = [:]
         if SystemLanguageModel.default.isAvailable {
+            await progress?(.classifyingTerms(completed: 0, total: terms.count))
+            try Task.checkCancellation()
             let excerpt = String(context.prefix(contextLimit))
             for start in stride(from: 0, to: terms.count, by: batchSize) {
                 try Task.checkCancellation()
-                let batch = Array(terms[start..<min(start + batchSize, terms.count)])
-                let result: ProtocolTermLabels
+                let end = min(start + batchSize, terms.count)
+                let batch = Array(terms[start..<end])
                 do {
-                    result = try await classifyBatch(batch, excerpt: excerpt)
+                    let result = try await classifyBatch(batch, excerpt: excerpt)
+                    try Task.checkCancellation()
+                    labels.merge(validatedLabels(result, for: batch)) { _, new in new }
                 } catch {
                     try Task.checkCancellation()
-                    continue
                 }
-                try Task.checkCancellation()
-                labels.merge(validatedLabels(result, for: batch)) { _, new in new }
+                await progress?(.classifyingTerms(completed: end, total: terms.count))
             }
         }
 
+        try Task.checkCancellation()
+        await progress?(.organizingTerms)
         try Task.checkCancellation()
         return group(terms, labels: labels)
     }

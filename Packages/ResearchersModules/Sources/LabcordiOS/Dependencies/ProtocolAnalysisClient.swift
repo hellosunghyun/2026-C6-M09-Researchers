@@ -32,12 +32,39 @@ nonisolated public struct ProtocolAnalysisItem: Equatable, Sendable {
     }
 }
 
+nonisolated public enum ProtocolReadingPhase: String, Equatable, Sendable {
+    case identifying, extracting, recognizingText, completed, failed, cancelled
+}
+
 public struct ProtocolAnalysisClient: Sendable {
-    public typealias Progress = @Sendable (UUID, DocumentProgress) -> Void
+    public typealias Progress = @Sendable (UUID, ProtocolReadingPhase) -> Void
 
     public var parse: @Sendable (
         [ProtocolAnalysisInput], Progress?
     ) async throws -> [ProtocolAnalysisItem]
+
+    /// 파서의 동기 콜백을 순서대로 전달하고 마지막 이벤트까지 반영한 후 반환합니다.
+    public func parseReportingProgress(
+        _ inputs: [ProtocolAnalysisInput],
+        progress: @escaping @Sendable (UUID, ProtocolReadingPhase) async -> Void
+    ) async throws -> [ProtocolAnalysisItem] {
+        let (events, continuation) = AsyncStream<(UUID, ProtocolReadingPhase)>.makeStream()
+        let updates = Task {
+            for await (inputID, phase) in events { await progress(inputID, phase) }
+        }
+        do {
+            let result = try await parse(inputs) { inputID, phase in
+                continuation.yield((inputID, phase))
+            }
+            continuation.finish()
+            await updates.value
+            return result
+        } catch {
+            continuation.finish()
+            await updates.value
+            throw error
+        }
+    }
 
     public init(
         parse: @escaping @Sendable (
@@ -55,7 +82,8 @@ extension ProtocolAnalysisClient: DependencyKey {
             options: DocumentParserOptions(performOCR: true)
         ) { event in
             guard inputs.indices.contains(event.inputIndex) else { return }
-            progress?(inputs[event.inputIndex].id, event)
+            guard let phase = ProtocolReadingPhase(rawValue: event.phase.rawValue) else { return }
+            progress?(inputs[event.inputIndex].id, phase)
         }
         try Task.checkCancellation()
         return zip(inputs, results).map { input, result in

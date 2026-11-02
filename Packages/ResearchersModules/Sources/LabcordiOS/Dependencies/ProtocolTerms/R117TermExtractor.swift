@@ -12,10 +12,12 @@ nonisolated public final class R117TermExtractor: Sendable {
     }
     private let runtime = R117ExtractionRuntime()
 
-    public func extract(from text: String) async throws -> [String] {
+    public func extract(
+        from text: String, progress: ProtocolTermClient.Progress? = nil
+    ) async throws -> [String] {
         try Task.checkCancellation()
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        return try await runtime.extract(text)
+        return try await runtime.extract(text, progress: progress)
     }
 }
 
@@ -32,7 +34,9 @@ private actor R117ExtractionRuntime {
     private var ranker: R117Ranker?
     private let logger = Logger(subsystem: "com.labcord", category: "R117")
 
-    func extract(_ text: String) async throws -> [String] {
+    func extract(
+        _ text: String, progress: ProtocolTermClient.Progress?
+    ) async throws -> [String] {
         let clock = ContinuousClock()
         let started = clock.now
         defer {
@@ -51,7 +55,7 @@ private actor R117ExtractionRuntime {
             self.generator = generator
         }
         let language = NLLanguageRecognizer.dominantLanguage(for: text) == .korean ? "ko" : "en"
-        let pool = try await generator.generate(text: text, language: language)
+        let pool = try await generator.generate(text: text, language: language, progress: progress)
         try Task.checkCancellation()
         let groups = try R117ShortlistBuilder.build(source: text, pool: pool)
         guard !groups.isEmpty else { return [] }
@@ -63,13 +67,9 @@ private actor R117ExtractionRuntime {
                 surface: mention.surface, start: mention.start, end: mention.end
             )
         }
-        let ranker: R117Ranker
-        if let cached = self.ranker {
-            ranker = cached
-        } else {
-            ranker = try R117Ranker(resourceDirectory: resources)
-            self.ranker = ranker
-        }
+        let ranker = try await preparedRanker(resources: resources, progress: progress)
+        await progress?(.rankingCandidates(groups.count))
+        try Task.checkCancellation()
         let result = try ranker.scores(text: text, spans: spans)
         let candidates = try groups.enumerated().map { index, group in
             try group.selectionCandidate(index: index, source: text,
@@ -80,5 +80,17 @@ private actor R117ExtractionRuntime {
         )
         try Task.checkCancellation()
         return selected.map { candidates[$0].text }
+    }
+
+    private func preparedRanker(
+        resources: URL, progress: ProtocolTermClient.Progress?
+    ) async throws -> R117Ranker {
+        if let cached = ranker { return cached }
+        await progress?(.preparingRanking)
+        try Task.checkCancellation()
+        if let cached = ranker { return cached }
+        let loaded = try R117Ranker(resourceDirectory: resources)
+        ranker = loaded
+        return loaded
     }
 }

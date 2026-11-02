@@ -25,9 +25,12 @@ actor R117NativeCandidateGenerator {
         self.resourceDirectory = resourceDirectory
     }
 
-    func generate(text: String, language: String) async throws -> R117NativeCandidatePool {
+    func generate(
+        text: String, language: String, progress: ProtocolTermClient.Progress? = nil
+    ) async throws -> R117NativeCandidatePool {
         try await R117NativeWorker.shared.generate(
-            text: text, language: language, resourceDirectory: resourceDirectory
+            text: text, language: language,
+            resourceDirectory: resourceDirectory, progress: progress
         )
     }
 }
@@ -37,9 +40,14 @@ private actor R117NativeWorker {
     private var pipelines: [URL: R117NativePipeline] = [:]
 
     func generate(
-        text: String, language: String, resourceDirectory: URL
-    ) throws -> R117NativeCandidatePool {
+        text: String, language: String, resourceDirectory: URL,
+        progress: ProtocolTermClient.Progress?
+    ) async throws -> R117NativeCandidatePool {
         try Task.checkCancellation()
+        if pipelines[resourceDirectory] == nil {
+            await progress?(.preparingExtraction)
+            try Task.checkCancellation()
+        }
         let pipeline: R117NativePipeline
         if let cached = pipelines[resourceDirectory] {
             pipeline = cached
@@ -47,6 +55,9 @@ private actor R117NativeWorker {
             pipeline = try R117NativePipeline(resourceDirectory: resourceDirectory)
             pipelines[resourceDirectory] = pipeline
         }
+        await progress?(.extractingCandidates)
+        try Task.checkCancellation()
+        // Decoder 전역 설정부터 후보 생성·정리까지는 suspension 없이 같은 worker에서 실행합니다.
         return try pipeline.generate(text: text, language: language)
     }
 }
