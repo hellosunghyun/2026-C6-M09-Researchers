@@ -8,12 +8,12 @@ struct ProtocolRegistrationView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 16) {
-                    ProtocolSourceOption(title: "사진", subtitle: "PNG, JPG · 최대 10장") {
+                    ProtocolSourceOption(title: "사진", subtitle: "PNG, JPG") {
                         store.send(.sourceTapped(.photos))
                     }
                     .accessibilityIdentifier("entry-source-photos")
 
-                    ProtocolSourceOption(title: "파일", subtitle: "PDF, XLSX, DOCX · 최대 1GB") {
+                    ProtocolSourceOption(title: "파일", subtitle: "PDF, XLSX, DOCX") {
                         store.send(.sourceTapped(.file))
                     }
                     .accessibilityIdentifier("entry-source-file")
