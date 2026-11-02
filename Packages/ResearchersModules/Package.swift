@@ -64,10 +64,16 @@ let package = Package(
                     condition: .when(platforms: [.iOS])
                 )
             ],
+            resources: [.copy("Resources/R117")],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .testTarget(
+            name: "LabcordiOSTests",
+            dependencies: ["LabcordiOS"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(
             name: "LabcordWatchOS",

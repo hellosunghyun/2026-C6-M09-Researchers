@@ -8,7 +8,7 @@
 | 항목 | 현재 설정·적용 |
 | --- | --- |
 | Watch 앱 경로 | 소스는 `ResearchWatchApp/`, 스킴은 `ResearchWatch Watch App` |
-| 로컬 패키지 | 단일 `Packages/ResearchersModules/Package.swift` 아래 네 개 타깃 |
+| 로컬 패키지 | 단일 `Packages/ResearchersModules/Package.swift` 아래 제품 타깃 네 개와 `LabcordiOSTests` 테스트 타깃 |
 | 기기별 저장·통신 | 기기별 구현은 `LabcordiOS`·`LabcordWatchOS`에도 있음. 새 저장 구현의 경로는 해당 작업에서 팀과 확인 |
 | SwiftData | `LabcordShared/Models`의 모델 선언과 iPhone의 저장 실행 책임을 구분. Watch에 저장 구현을 새로 두거나 기존 모델을 자동 이동하지 않음 |
 | 들여쓰기 | 스타일 가이드는 2 spaces, 기존 Swift는 주로 4 spaces. 적용 기준은 팀 확인 사항이며 일괄 포맷 변경하지 않음 |
