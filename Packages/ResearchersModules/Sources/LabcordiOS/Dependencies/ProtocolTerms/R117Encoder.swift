@@ -209,6 +209,25 @@ nonisolated final class R117Encoder {
         )
     }
 
+    func last2SharedConcurrently(
+        text: String, spans: [Range<Int>],
+        isolation: isolated (any Actor)? = #isolation,
+        progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) async throws -> [[Float]] {
+        try Task.checkCancellation()
+        let source = Array(text.unicodeScalars)
+        let normalized = source.map { scalar -> Unicode.Scalar in
+            scalar.properties.generalCategory == .control
+                && scalar != "\n" && scalar != "\r" && scalar != "\t" ? " " : scalar
+        }
+        let encoding = try tokenizer.encode(String(String.UnicodeScalarView(normalized)))
+        try Task.checkCancellation()
+        let model = try runner.model(function: "teacher_last2")
+        return try await R117SharedContextEncoder.last2(
+            encoding: encoding, source: source, spans: spans, model: model, progress: progress
+        )
+    }
+
     func predict(model: MLModel, ids: [Int]) throws -> [[Float]] {
         let prediction = try model.prediction(from: R117Tensor.input(ids: ids))
         let output = try R117Tensor.embeddings(from: prediction, length: ids.count)
