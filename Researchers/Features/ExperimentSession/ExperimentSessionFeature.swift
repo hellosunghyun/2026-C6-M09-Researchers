@@ -132,58 +132,8 @@ struct ExperimentSessionFeature {
                  .dismissStopFailure:
                 return .none
 
-            case .returnHomeTapped:
-                guard state.canCloseSession else { return .none }
-                state.isReturningHome = true
-                state.timer.isClosing = true
-                state.exitFailed = false
-                let experimentID = state.experimentID
-                let exitID = state.exitID ?? uuid()
-                state.exitID = exitID
-                let exitedAt = now
-                let ownerID = state.capture.camera.ownerID
-                let title = state.detail?.title ?? "실험"
-                let runningTimers = state.timer.timerCollection.timers.filter {
-                    $0.status == .running && $0.remainingSeconds(at: exitedAt) > 0
-                }
-                return .run { send in
-                    do {
-                        try await experimentClient.leaveSession(experimentID, exitID, exitedAt)
-                    } catch {
-                        await send(.homeExitFailed)
-                        return
-                    }
-                    if !runningTimers.isEmpty,
-                       let status = try? await notificationPermissionClient.requestAccess() {
-                        switch status {
-                        case .authorized, .provisional, .ephemeral:
-                            for timer in runningTimers {
-                                try? await timerCompletionNotificationClient.schedule(
-                                    experimentID, title, timer
-                                )
-                            }
-                        case .notDetermined, .denied, .unknown:
-                            break
-                        }
-                    }
-                    await send(.voice(.closeRequested))
-                    await cameraSessionClient.cancelVideoRecording()
-                    await speechRecordingClient.cancel()
-                    await cameraSessionClient.deactivate(ownerID)
-                    await send(.homeExitCompleted)
-                }
-
-            case .homeExitCompleted:
-                return .none
-
-            case .homeExitFailed:
-                state.isReturningHome = false
-                state.timer.isClosing = false
-                state.exitFailed = true
-                return .send(.timer(.timerTick(now)))
-
-            case .dismissHomeExitFailure:
-                state.exitFailed = false
+            case .returnHomeTapped, .homeExitCompleted, .homeExitFailed,
+                 .dismissHomeExitFailure:
                 return .none
 
             case .permissions(.microphoneStatusUpdated(.authorized)):
