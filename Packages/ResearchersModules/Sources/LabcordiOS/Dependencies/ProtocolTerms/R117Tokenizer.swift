@@ -15,7 +15,7 @@ nonisolated final class R117Tokenizer {
     private let root = Node()
     private let characters: CharsMap
     private let unknownScore: Double
-    private let specialTokens: [(String, Int)]
+    private let specialTokens: [R117AddedToken]
 
     init(url: URL) throws {
         let data = try Data(contentsOf: url)
@@ -53,8 +53,11 @@ nonisolated final class R117Tokenizer {
             guard let text = entry["content"] as? String, let id = entry["id"] as? Int else {
                 return nil
             }
-            return (text, id)
-        }.sorted { $0.0.count > $1.0.count }
+            return R117AddedToken(
+                content: text, id: id, leftStrip: entry["lstrip"] as? Bool ?? false,
+                rightStrip: entry["rstrip"] as? Bool ?? false
+            )
+        }.sorted { $0.content.count > $1.content.count }
     }
 
     func encode(_ text: String) throws -> Encoding {
@@ -67,14 +70,13 @@ nonisolated final class R117Tokenizer {
                 position += 1
                 continue
             }
-            let remaining = String(String.UnicodeScalarView(scalars[position...]))
-            if let special = specialTokens.first(where: { remaining.hasPrefix($0.0) }) {
-                appendNormal(Array(scalars[beginning..<position]), base: beginning, to: &result)
-                let end = position + special.0.unicodeScalars.count
-                result.ids.append(special.1)
-                result.offsets.append(position..<end)
-                position = end
-                beginning = end
+            if let match = specialMatch(in: scalars, at: position, lowerBound: beginning) {
+                appendNormal(Array(scalars[beginning..<match.range.lowerBound]),
+                             base: beginning, to: &result)
+                result.ids.append(match.id)
+                result.offsets.append(match.range)
+                position = match.range.upperBound
+                beginning = position
             } else {
                 position += 1
             }
@@ -84,6 +86,19 @@ nonisolated final class R117Tokenizer {
             throw R117RuntimeError.invalidTokenizer
         }
         return result
+    }
+
+    private func specialMatch(
+        in scalars: [UnicodeScalar], at position: Int, lowerBound: Int
+    ) -> (id: Int, range: Range<Int>)? {
+        for special in specialTokens {
+            if let range = special.matchedRange(
+                in: scalars, at: position, lowerBound: lowerBound
+            ) {
+                return (special.id, range)
+            }
+        }
+        return nil
     }
 
     private func appendNormal(
@@ -211,14 +226,42 @@ nonisolated final class R117Tokenizer {
             tokens.append((previous.id, range))
             end = previous.start
         }
+        var previousWasUnknown = false
         for (id, range) in tokens.reversed() {
-            if id == 3, result.ids.last == 3, let previous = result.offsets.last {
+            if id == 3, previousWasUnknown, let previous = result.offsets.last {
                 result.offsets[result.offsets.count - 1] = previous.lowerBound..<range.upperBound
             } else {
                 result.ids.append(id)
                 result.offsets.append(range)
             }
+            previousWasUnknown = id == 3
         }
+    }
+}
+
+/// AddedToken의 strip 범위도 원문 좌표에 포함합니다. 일반 토큰 정규화보다 먼저 적용합니다.
+nonisolated struct R117AddedToken {
+    let content: String
+    let id: Int
+    let leftStrip: Bool
+    let rightStrip: Bool
+
+    func matchedRange(
+        in source: [UnicodeScalar], at position: Int, lowerBound: Int
+    ) -> Range<Int>? {
+        let token = Array(content.unicodeScalars)
+        guard !token.isEmpty, lowerBound >= 0, position >= lowerBound,
+              position + token.count <= source.count,
+              source[position..<(position + token.count)].elementsEqual(token) else { return nil }
+        var start = position
+        var end = position + token.count
+        if leftStrip {
+            while start > lowerBound, source[start - 1].properties.isWhitespace { start -= 1 }
+        }
+        if rightStrip {
+            while end < source.count, source[end].properties.isWhitespace { end += 1 }
+        }
+        return start..<end
     }
 }
 

@@ -72,7 +72,8 @@ let package = Package(
         ),
         .testTarget(
             name: "LabcordiOSTests",
-            dependencies: ["LabcordiOS"],
+            dependencies: ["LabcordiOS", "LabcordShared"],
+            resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .target(

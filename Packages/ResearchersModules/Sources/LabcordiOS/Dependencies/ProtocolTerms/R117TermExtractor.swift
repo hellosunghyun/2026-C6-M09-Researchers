@@ -7,6 +7,9 @@ nonisolated public final class R117TermExtractor: Sendable {
     public static let shared = R117TermExtractor()
     /// 압축본 same87 한영 동일 가중 Recall@50 기준으로 선택한 배포 head입니다.
     public static let deploymentHeadFunction = "r117_seed42"
+    static var resourceDirectory: URL? {
+        Bundle.module.url(forResource: "R117", withExtension: nil)
+    }
     private let runtime = R117ExtractionRuntime()
 
     public func extract(from text: String) async throws -> [String] {
@@ -37,7 +40,7 @@ private actor R117ExtractionRuntime {
             logger.info("R117 extraction finished after \(elapsed, privacy: .public)")
         }
         try Task.checkCancellation()
-        guard let resources = Bundle.module.url(forResource: "R117", withExtension: nil) else {
+        guard let resources = R117TermExtractor.resourceDirectory else {
             throw R117ExtractionError.resourcesUnavailable
         }
         let generator: R117NativeCandidateGenerator

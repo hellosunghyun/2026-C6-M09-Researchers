@@ -32,9 +32,12 @@ nonisolated enum R117Selector {
         guard scores.allSatisfy(\.isFinite),
               candidates.allSatisfy({ $0.frozenScore.isFinite })
         else { throw R117SelectionError.nonfiniteScore }
-        let scalarCount = source.unicodeScalars.count
+        let scalars = Array(source.unicodeScalars)
+        let scalarCount = scalars.count
         guard candidates.allSatisfy({ candidate in
             candidate.start >= 0 && candidate.end > candidate.start && candidate.end <= scalarCount
+                && scalars[candidate.start..<candidate.end]
+                    .elementsEqual(candidate.text.unicodeScalars)
                 && candidate.mentions.allSatisfy {
                     $0.lowerBound >= 0 && $0.upperBound > $0.lowerBound
                         && $0.upperBound <= scalarCount

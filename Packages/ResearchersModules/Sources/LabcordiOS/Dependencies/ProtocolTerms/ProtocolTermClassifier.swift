@@ -7,17 +7,21 @@ nonisolated public struct ProtocolExtractedTerms: Equatable, Sendable {
     public var samples: [String]
     public var glossaryTerms: [String]
     public var units: [String]
+    /// 모델 사용 불가·응답 누락 등으로 규칙 기반 분류가 포함됐는지 나타냅니다.
+    public var usedFallback: Bool
 
     public init(
         materials: [String] = [],
         samples: [String] = [],
         glossaryTerms: [String] = [],
-        units: [String] = []
+        units: [String] = [],
+        usedFallback: Bool = false
     ) {
         self.materials = materials
         self.samples = samples
         self.glossaryTerms = glossaryTerms
         self.units = units
+        self.usedFallback = usedFallback
     }
 
     public var isEmpty: Bool {
@@ -75,7 +79,9 @@ nonisolated public enum ProtocolTermClassifier {
     private static func group(
         _ terms: [String], labels: [String: ProtocolTermLabel.Category]
     ) -> ProtocolExtractedTerms {
-        var grouped = ProtocolExtractedTerms()
+        var grouped = ProtocolExtractedTerms(
+            usedFallback: terms.contains { labels[$0] == nil }
+        )
         for term in terms {
             let category = labels[term] ?? fallbackCategory(term)
             switch category {
