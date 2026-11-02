@@ -35,11 +35,19 @@ struct ProtocolRegistrationFeature {
             importedPhotos + (importedFile.map { [$0] } ?? [])
         }
 
-        var pendingInputs: [ImportedProtocolInput] {
+        var pendingParsingInputs: [ImportedProtocolInput] {
             selectedInputs.filter { input in
                 guard let item = analysisResults[input.id] else { return true }
                 if case .failure = item.outcome { return true }
                 return false
+            }
+        }
+
+        var pendingInputs: [ImportedProtocolInput] {
+            selectedInputs.filter { input in
+                guard let item = analysisResults[input.id] else { return true }
+                if case .failure = item.outcome { return true }
+                return analysisTerms[input.id] == nil
             }
         }
 
@@ -116,13 +124,11 @@ struct ProtocolRegistrationFeature {
             switch action {
             case .backTapped:
                 guard !state.importing, state.analysisID == nil else { return .none }
-                state.importedPhotos = []
-                state.importedFile = nil
+                state.clearInputs()
                 return .none
 
             case .clearImportedInputs:
-                state.importedPhotos = []
-                state.importedFile = nil
+                state.clearInputs()
                 return .none
 
             case .skipTapped:
@@ -147,8 +153,7 @@ struct ProtocolRegistrationFeature {
                 switch result {
                 case let .success(entry):
                     state.pendingID = nil
-                    state.importedPhotos = []
-                    state.importedFile = nil
+                    state.clearInputs()
                     return .send(.saveSucceeded(entry))
                 case .failure:
                     state.hasFailed = true
@@ -197,7 +202,8 @@ struct ProtocolRegistrationFeature {
                 return .none
 
             case let .startAnalysis(id):
-                guard state.analysisID == nil, !state.pendingInputs.isEmpty else { return .none }
+                guard state.analysisID == nil, !state.importing, !state.isSaving,
+                      !state.pendingInputs.isEmpty else { return .none }
                 state.analysisID = id
                 state.analysisPhase = .reading
                 state.analysisCancellationRequested = false
@@ -228,14 +234,12 @@ struct ProtocolRegistrationFeature {
                     state.analysisFailed = true
                     return .none
                 }
-                for item in items {
+                let selectedIDs = Set(state.selectedInputs.map(\.id))
+                for item in items where selectedIDs.contains(item.id) {
                     state.analysisResults[item.id] = item
                     state.analysisTerms[item.id] = terms[item.id]
                 }
-                state.analysisFailed = items.contains {
-                    if case .failure = $0.outcome { return true }
-                    return false
-                }
+                state.analysisFailed = !state.pendingInputs.isEmpty
                 return .none
 
             case .saveSucceeded:
@@ -249,6 +253,17 @@ struct ProtocolRegistrationFeature {
 }
 
 private extension ProtocolRegistrationFeature.State {
+    mutating func clearInputs() {
+        importedPhotos = []
+        importedFile = nil
+        analysisID = nil
+        analysisCancellationRequested = false
+        analysisResults = [:]
+        analysisTerms = [:]
+        analysisFailed = false
+        analysisPhase = .reading
+    }
+
     mutating func clearAnalysis(for id: UUID) {
         analysisResults[id] = nil
         analysisTerms[id] = nil

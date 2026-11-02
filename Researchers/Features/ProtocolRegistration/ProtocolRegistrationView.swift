@@ -84,7 +84,9 @@ struct ProtocolRegistrationView: View {
                     .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 }
                 if store.analysisID == nil && store.analysisFailed {
-                    Text("일부 파일을 분석하지 못했어요. 다시 시도해 주세요.")
+                    Text(store.pendingParsingInputs.isEmpty
+                         ? "일부 파일에서 용어를 추출하지 못했어요. 다시 시도해 주세요."
+                         : "일부 파일을 분석하지 못했어요. 다시 시도해 주세요.")
                         .font(.footnote)
                 }
                 if !store.successfulResults.isEmpty, store.analysisID == nil {
@@ -191,6 +193,11 @@ struct ProtocolRegistrationView: View {
             case .failure: importFailed = true
             }
         }
+        .onDisappear {
+            guard store.analysisID != nil else { return }
+            store.send(.cancelAnalysis)
+            analysisTask?.cancel()
+        }
         .navigationBarBackButtonHidden()
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -217,7 +224,7 @@ private extension ProtocolRegistrationView {
 
     var reviewConfirmationMessage: String {
         var messages: [String] = []
-        if !store.pendingInputs.isEmpty {
+        if !store.pendingParsingInputs.isEmpty {
             messages.append("분석하지 못한 파일은 제외돼요.")
         }
         if store.successfulResults.contains(where: \.hasWarnings) {
@@ -237,18 +244,25 @@ private extension ProtocolRegistrationView {
     }
 
     func analyze() {
+        guard store.analysisID == nil, !store.importing, !store.isSaving else { return }
         let retainedInputs = store.pendingInputs
         guard !retainedInputs.isEmpty else { return }
-        let inputs = retainedInputs.map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
+        let pendingIDs = Set(retainedInputs.map(\.id))
+        let cachedResults = store.successfulResults.filter { pendingIDs.contains($0.id) }
+        let cachedIDs = Set(cachedResults.map(\.id))
+        let inputs = retainedInputs.filter { !cachedIDs.contains($0.id) }
+            .map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
         let id = UUID()
         store.send(.startAnalysis(id))
+        guard store.analysisID == id else { return }
         analysisTask = Task {
             defer { withExtendedLifetime(retainedInputs) {} }
             let results: [ProtocolAnalysisItem]?
             do {
-                results = try await analysisClient.parse(inputs, nil)
+                let parsed = inputs.isEmpty ? [] : try await analysisClient.parse(inputs, nil)
+                results = cachedResults + parsed
             } catch {
-                results = nil
+                results = cachedResults.isEmpty ? nil : cachedResults
             }
             var terms: [UUID: ProtocolExtractedTerms] = [:]
             if let results, !Task.isCancelled {
@@ -258,6 +272,7 @@ private extension ProtocolRegistrationView {
                     terms[item.id] = try? await termClient.extract(text)
                 }
             }
+            guard store.analysisID == id else { return }
             store.send(.analysisFinished(id, results, terms))
             analysisTask = nil
             if skipAfterCancellation {
