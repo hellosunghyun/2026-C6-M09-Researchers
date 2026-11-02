@@ -79,14 +79,7 @@ struct ProtocolRegistrationView: View {
                     }
                     .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 }
-                if store.analysisID != nil {
-                    ProgressView("프로토콜을 분석하고 있어요")
-                    Button("분석 취소") {
-                        store.send(.cancelAnalysis)
-                        analysisTask?.cancel()
-                    }
-                    .disabled(store.analysisCancellationRequested)
-                } else if store.analysisFailed {
+                if store.analysisID == nil && store.analysisFailed {
                     Text("일부 파일을 분석하지 못했어요. 다시 시도해 주세요.")
                         .font(.footnote)
                 }
@@ -120,6 +113,17 @@ struct ProtocolRegistrationView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
+        }
+        .overlay {
+            if store.analysisID != nil {
+                ProtocolAnalysisProgressView(isCancelling: store.analysisCancellationRequested) {
+                    store.send(.cancelAnalysis)
+                    analysisTask?.cancel()
+                }
+                .background(Color(
+                    "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
+                ))
+            }
         }
         .alert("실험을 저장하지 못했어요", isPresented: Binding(
             get: { store.hasFailed },
@@ -161,6 +165,7 @@ struct ProtocolRegistrationView: View {
         .navigationTitle("실험 등록")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
+        .toolbar(store.analysisID == nil ? .visible : .hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("뒤로 가기", systemImage: "chevron.backward") {
