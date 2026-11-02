@@ -12,3 +12,6 @@ ChipGroup(samples, selection: $selectedIDs, label: \.title,
 - 추가 버튼이 필요 없으면 `onAdd`를 생략합니다.
 
 [구현](../../../../../Packages/ResearchersModules/Sources/LabcordDesignSystem/Components/Chip/ChipGroup.swift)
+
+- 조회 전용 목록은 `ChipGroup(items: terms, label: \.value)`처럼 `onRemove`를 생략합니다.
+  제거 버튼 없이 같은 칩 스타일을 표시하며, 빈 제거 콜백을 전달하지 않습니다.

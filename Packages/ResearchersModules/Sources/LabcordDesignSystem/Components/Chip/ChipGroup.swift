@@ -4,7 +4,7 @@ public struct ChipGroup<Item: Identifiable>: View where Item.ID: Hashable {
     private let items: [Item]
     @Binding private var selection: Set<Item.ID>
     private let label: (Item) -> String
-    private let onRemove: (Item) -> Void
+    private let onRemove: ((Item) -> Void)?
     private let onAdd: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -29,7 +29,7 @@ public struct ChipGroup<Item: Identifiable>: View where Item.ID: Hashable {
         items: [Item],
         selection: Binding<Set<Item.ID>> = .constant([]),
         label: @escaping (Item) -> String,
-        onRemove: @escaping (Item) -> Void = { _ in },
+        onRemove: ((Item) -> Void)? = nil,
         onAdd: (() -> Void)? = nil
     ) {
         self.items = items
@@ -42,12 +42,14 @@ public struct ChipGroup<Item: Identifiable>: View where Item.ID: Hashable {
     public var body: some View {
         ChipFlowLayout(spacing: LayoutTokens.spacing12) {
             ForEach(items) { item in
-                SetupSmallChip(label: label(item)) {
-                    withAnimation(layoutAnimation) {
-                        selection.remove(item.id)
-                        onRemove(item)
+                SetupSmallChip(label: label(item), onDismiss: onRemove.map { remove in
+                    {
+                        withAnimation(layoutAnimation) {
+                            selection.remove(item.id)
+                            remove(item)
+                        }
                     }
-                }
+                })
                 .transition(chipTransition)
             }
 
@@ -84,7 +86,7 @@ public struct ChipGroup<Item: Identifiable>: View where Item.ID: Hashable {
 
 private struct SetupSmallChip: View {
     let label: String
-    let onDismiss: () -> Void
+    let onDismiss: (() -> Void)?
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
@@ -96,11 +98,13 @@ private struct SetupSmallChip: View {
                 .typography(Typography.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Button(action: onDismiss) {
-                IconArtwork(icon: .x, size: 14, relativeTo: .subheadline)
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    IconArtwork(icon: .x, size: 14, relativeTo: .subheadline)
+                }
+                .buttonStyle(PressFeedbackButtonStyle())
+                .accessibilityLabel(Text("\(label) 제거"))
             }
-            .buttonStyle(PressFeedbackButtonStyle())
-            .accessibilityLabel(Text("\(label) 제거"))
         }
     }
 }
