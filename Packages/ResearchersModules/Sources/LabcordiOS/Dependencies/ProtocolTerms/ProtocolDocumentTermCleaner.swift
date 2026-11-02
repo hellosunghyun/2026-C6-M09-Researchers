@@ -21,10 +21,14 @@ nonisolated enum ProtocolDocumentTermCleaner {
                     && occurrence.upperBound <= $0.upperBound }
             }
             guard isContained, !crossesListItem(term), !crossesReactions(term) else { return [] }
-            return splitList(term)
+            let repaired = DocumentTermSurfaceRepair.repair(
+                term, source: source, blocks: ranges.blocks
+            )
+            return splitList(repaired)
         }
         let candidates: [Candidate] = surfaces.compactMap { surface in
             guard !surface.isEmpty, !isTruncatedSymbol(surface),
+                  !DocumentTermSurfaceRepair.isOrphanedPercent(surface),
                   hasBalancedDelimiters(surface) else { return nil }
             let valid = occurrences(of: surface, in: source).filter { occurrence in
                 ranges.blocks.contains { $0.lowerBound <= occurrence.lowerBound
@@ -85,12 +89,14 @@ nonisolated enum ProtocolDocumentTermCleaner {
     private static func splitList(_ text: String) -> [String] {
         var parts: [String] = []
         var start = text.startIndex
-        var depth = 0
+        let pairs: [Character: Character] = [")": "(", "）": "（", "]": "[", "}": "{"]
+        let opening = Set(pairs.values)
+        var stack: [Character] = []
         for index in text.indices {
             let character = text[index]
-            if character == "(" || character == "（" { depth += 1 }
-            if character == ")" || character == "）" { depth = max(0, depth - 1) }
-            guard depth == 0, character == ";" || character == "," else { continue }
+            if opening.contains(character) { stack.append(character) }
+            if let expected = pairs[character], stack.last == expected { stack.removeLast() }
+            guard stack.isEmpty, character == ";" || character == "," else { continue }
             if character == "," && isChemicalComma(text, at: index) { continue }
             let piece = text[start..<index].trimmingCharacters(in: .whitespacesAndNewlines)
             if !piece.isEmpty { parts.append(piece) }
@@ -205,5 +211,109 @@ nonisolated enum ProtocolDocumentTermCleaner {
 
     private static func crossesListItem(_ term: String) -> Bool {
         term.range(of: "\\n\\s*(?:[0-9]+[.)]|[-•])\\s", options: .regularExpression) != nil
+    }
+}
+
+/// 새 이름을 생성하지 않고, 같은 블록의 모든 출현에서 완전한 표기가 일치할 때만 복원합니다.
+nonisolated private enum DocumentTermSurfaceRepair {
+    private static let delimiterPattern = """
+        [\\p{L}\\p{N}]+[（(][^()（）\\n]{1,80}[)）][\\p{L}\\p{N}]*|\
+        \\[[^\\[\\]\\n]{1,80}\\][\\p{L}\\p{N}]*
+        """
+
+    static func repair(_ term: String, source: String, blocks: [Range<Int>]) -> String {
+        let valid = occurrences(of: term, in: source).filter { occurrence in
+            blocks.contains { $0.lowerBound <= occurrence.lowerBound
+                && occurrence.upperBound <= $0.upperBound }
+        }
+        guard !valid.isEmpty else { return term }
+        let completions: [String?]
+        if isOrphanedPercent(term) {
+            completions = valid.map { completeConcentration($0, source: source) }
+        } else if needsDelimiterRepair(term) {
+            completions = delimiterCompletions(valid, source: source, blocks: blocks)
+        } else {
+            return term
+        }
+        guard let first = completions.first ?? nil,
+              completions.allSatisfy({ $0 == first }) else { return term }
+        return first
+    }
+
+    static func isOrphanedPercent(_ term: String) -> Bool {
+        let normalized = term.precomposedStringWithCompatibilityMapping
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix("%"), normalized.count > 1 else { return false }
+        let unit = "^%\\s*(?:R\\.?H\\.?|\\(?[vw]/[vw]\\)?)$"
+        return normalized.range(of: unit, options: [.regularExpression, .caseInsensitive]) == nil
+    }
+
+    private static func needsDelimiterRepair(_ term: String) -> Bool {
+        let pairs: [Character: Character] = [")": "(", "）": "（", "]": "["]
+        let opening = Set(pairs.values)
+        if let first = term.first, opening.contains(first) { return true }
+        var stack: [Character] = []
+        for character in term {
+            if opening.contains(character) { stack.append(character) }
+            if let expected = pairs[character], stack.popLast() != expected { return true }
+        }
+        return !stack.isEmpty
+    }
+
+    private static func delimiterCompletions(
+        _ occurrences: [Range<Int>], source: String, blocks: [Range<Int>]
+    ) -> [String?] {
+        guard let regex = try? NSRegularExpression(pattern: delimiterPattern) else { return [] }
+        let matches = regex.matches(in: source, range: NSRange(source.startIndex..., in: source))
+        let enclosing = matches.compactMap { match -> (String, Range<Int>)? in
+            guard let range = Range(match.range, in: source),
+                  let scalarRange = scalarRange(range, in: source),
+                  blocks.contains(where: { $0.lowerBound <= scalarRange.lowerBound
+                      && scalarRange.upperBound <= $0.upperBound }) else { return nil }
+            return (String(source[range]), scalarRange)
+        }
+        return occurrences.map { occurrence in
+            let valid = enclosing.filter { $0.1.lowerBound <= occurrence.lowerBound
+                && occurrence.upperBound <= $0.1.upperBound }
+            return valid.count == 1 ? valid[0].0 : nil
+        }
+    }
+
+    private static func completeConcentration(_ range: Range<Int>, source: String) -> String? {
+        let scalars = Array(source.unicodeScalars)
+        var left = range.lowerBound
+        while left > 0, scalars[left - 1] == " " { left -= 1 }
+        let end = left
+        while left > 0, "0123456789.,".unicodeScalars.contains(scalars[left - 1]) { left -= 1 }
+        guard left < end else { return nil }
+        let number = String(String.UnicodeScalarView(scalars[left..<end]))
+        guard number.range(of: "^[0-9]+(?:[.,][0-9]+)?$", options: .regularExpression) != nil,
+              left == 0 || !CharacterSet.alphanumerics.contains(scalars[left - 1]) else {
+            return nil
+        }
+        return String(String.UnicodeScalarView(scalars[left..<range.upperBound]))
+    }
+
+    private static func occurrences(of term: String, in source: String) -> [Range<Int>] {
+        var result: [Range<Int>] = []
+        var offset = source.startIndex
+        while offset < source.endIndex,
+              let range = source.range(of: term, range: offset..<source.endIndex) {
+            guard let scalars = scalarRange(range, in: source) else { break }
+            result.append(scalars)
+            offset = source.index(after: range.lowerBound)
+        }
+        return result
+    }
+
+    private static func scalarRange(
+        _ range: Range<String.Index>, in source: String
+    ) -> Range<Int>? {
+        let scalars = source.unicodeScalars
+        guard let left = range.lowerBound.samePosition(in: scalars),
+              let right = range.upperBound.samePosition(in: scalars) else { return nil }
+        let start = scalars.distance(from: scalars.startIndex, to: left)
+        let end = scalars.distance(from: scalars.startIndex, to: right)
+        return start..<end
     }
 }

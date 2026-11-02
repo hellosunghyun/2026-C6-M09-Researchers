@@ -4,14 +4,14 @@ import OmniParser
 import XCTest
 
 final class ProtocolDocumentTermCleanerTests: XCTestCase {
-    func testBalancedChemicalNotationIsKeptAndBrokenParenthesesAreNotPromoted() throws {
+    func testBalancedChemicalNotationAndUnambiguousParenthesesAreRestored() throws {
         let source = "금속제(시스형)온도계 [14C]glucose Fe(OH)3 ＡＴＰ（ATP）"
         let document = DocumentParseResult(format: .pdf, blocks: [
             .init(kind: .paragraph, text: source, readingOrder: 0)
         ], warnings: [])
         let terms = ["금속제(시스형", "시스형)온도계", "[14C", "Fe(OH)3", "[14C]glucose", "ＡＴＰ（ATP）"]
         XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(terms, document: document),
-                       ["Fe(OH)3", "[14C]glucose", "ＡＴＰ（ATP）"])
+                       ["금속제(시스형)온도계", "[14C]glucose", "Fe(OH)3", "ＡＴＰ（ATP）"])
     }
 
     func testKoreanParticlesDoNotDuplicateSelectedNamesOrPromoteBrokenFinalSyllables() throws {
@@ -101,6 +101,59 @@ final class ProtocolDocumentTermCleanerTests: XCTestCase {
         let terms = [source, "C9H8O4", "CH3COOH", "C9H8O4 + H2O → C7H6O3"]
         XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(terms, document: document),
                        ["C9H8O4", "CH3COOH", "C9H8O4 + H2O → C7H6O3"])
+    }
+
+    func testPercentKeepsConcentrationAndUnitsAndDoesNotCreateMissingNumbers() throws {
+        let source = "85% 인산 70%에탄올 % 인산 %R.H. % 수득률(%) 에탄올(70%, v/v)"
+        let document = DocumentParseResult(format: .pdf, blocks: [
+            .init(kind: .paragraph, text: source, readingOrder: 0)
+        ], warnings: [])
+        let terms = ["85% 인산", "70%에탄올", "% 인산", "%R.H.", "%",
+                     "수득률(%)", "에탄올(70%, v/v)"]
+        XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(terms, document: document), [
+            "85% 인산", "70%에탄올", "%R.H.", "%", "수득률(%)", "에탄올(70%, v/v)"
+        ])
+    }
+
+    func testMissingConcentrationIsRestoredOnlyWhenEveryOccurrenceAgrees() throws {
+        let source = "85% 인산; 85% 인산; 70%에탄올; 50%에탄올; ８５％ 인산"
+        let document = DocumentParseResult(format: .pdf, blocks: [
+            .init(kind: .paragraph, text: source, readingOrder: 0)
+        ], warnings: [])
+        XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(
+            ["% 인산", "%에탄올", "８５％ 인산"], document: document
+        ), ["85% 인산", "８５％ 인산"])
+    }
+
+    func testBracketRestorationCannotChooseBetweenDifferentCompleteNames() throws {
+        let source = "풍속계(기계식)와 풍속계(기계식_지시형), 온도계(유리제)"
+        let document = DocumentParseResult(format: .pdf, blocks: [
+            .init(kind: .paragraph, text: source, readingOrder: 0)
+        ], warnings: [])
+        XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(
+            ["풍속계(기계식", "온도계(유리제"], document: document
+        ), ["온도계(유리제)"])
+    }
+
+    func testBracketRestorationDoesNotCrossBlocksOrSplitBracketedLists() throws {
+        let document = DocumentParseResult(format: .pdf, blocks: [
+            .init(kind: .paragraph, text: "풍속계(기계식", readingOrder: 0),
+            .init(kind: .paragraph, text: ")", readingOrder: 1),
+            .init(kind: .paragraph, text: "표준물질[A, B], 시약{C, D}", readingOrder: 2)
+        ], warnings: [])
+        XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(
+            ["풍속계(기계식", "표준물질[A, B], 시약{C, D}"], document: document
+        ), ["표준물질[A, B]", "시약{C, D}"])
+    }
+
+    func testCompleteBracketNameDoesNotAbsorbFollowingKoreanParticle() throws {
+        let source = "아스피린(Aspirin)은 아세틸살리실산(acetylsalicylic acid)을 뜻한다."
+        let document = DocumentParseResult(format: .pdf, blocks: [
+            .init(kind: .paragraph, text: source, readingOrder: 0)
+        ], warnings: [])
+        XCTAssertEqual(try ProtocolDocumentTermCleaner.clean(
+            ["아스피린(Aspirin)", "아세틸살리실산(acetylsalicylic acid)"], document: document
+        ), ["아스피린(Aspirin)", "아세틸살리실산(acetylsalicylic acid)"])
     }
 
     func testChangedDocumentTextCannotUseStaleBlockOffsets() {
