@@ -37,5 +37,9 @@ struct SpeechTermsView: View {
                 }
             }
         }
+        .foregroundStyle(Color.primary)
+        .tint(Color(
+            "General/Label/Brand", bundle: LabcordDesignSystemResources.bundle
+        ))
     }
 }
