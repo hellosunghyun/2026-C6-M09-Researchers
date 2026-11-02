@@ -44,7 +44,7 @@ nonisolated enum R117SharedContextEncoder {
     }
 }
 
-private extension R117SharedContextEncoder {
+nonisolated private extension R117SharedContextEncoder {
     struct Chunk: Sendable {
         let start: Int
         let rows: [[Float]]

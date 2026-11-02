@@ -99,12 +99,14 @@ private actor R117ExtractionRuntime {
                 await progress(.rankingProgress(completed: completed, total: total))
             }
         }
+        let onCandidateProgress: @Sendable (Int, Int) -> Void = { completed, total in
+            continuation.yield((completed, total))
+        }
         do {
             let result = try await ranker.scoresConcurrently(
-                text: text, spans: spans, contextMode: .documentSharedRefined(limit: 100)
-            ) { completed, total in
-                continuation.yield((completed, total))
-            }
+                text: text, spans: spans, contextMode: .documentSharedRefined(limit: 100),
+                candidateProgress: onCandidateProgress
+            )
             continuation.finish()
             await forwarder.value
             return result

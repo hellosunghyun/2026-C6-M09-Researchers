@@ -170,7 +170,7 @@ nonisolated final class R117Ranker {
     }
 }
 
-private extension R117Ranker {
+nonisolated private extension R117Ranker {
     func documentsConcurrently(
         text: String, isolation: isolated (any Actor)? = #isolation,
         observation: ((String, Double) -> Void)?
