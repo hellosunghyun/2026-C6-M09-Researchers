@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import LabcordDesignSystem
 import SwiftUI
 
 struct ProtocolRegistrationView: View {
@@ -7,18 +8,21 @@ struct ProtocolRegistrationView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(spacing: 16) {
-                    ProtocolSourceOption(title: "사진", subtitle: "PNG, JPG") {
+                VStack(spacing: 8) {
+                    ProtocolUploadButton("사진", description: "PNG, JPG", state: .default) {
                         store.send(.sourceTapped(.photos))
                     }
                     .accessibilityIdentifier("entry-source-photos")
 
-                    ProtocolSourceOption(title: "파일", subtitle: "PDF, XLSX, DOCX") {
+                    ProtocolUploadButton("파일", description: "PDF, XLSX, DOCX", state: .default) {
                         store.send(.sourceTapped(.file))
                     }
                     .accessibilityIdentifier("entry-source-file")
 
-                    ProtocolSourceOption(title: "최근 사용한 프로토콜", subtitle: nil) {
+                    ProtocolUploadButton(
+                        "최근 사용한 프로토콜", description: "", state: .default,
+                        showDescription: false
+                    ) {
                         store.send(.sourceTapped(.recent))
                     }
                     .accessibilityIdentifier("entry-source-recent")
@@ -28,7 +32,7 @@ struct ProtocolRegistrationView: View {
                 .padding(.top, 12)
             }
 
-            VStack(spacing: 0) {
+            VStack(spacing: 8) {
                 Button {
                     store.send(.skipTapped)
                 } label: {
@@ -39,10 +43,10 @@ struct ProtocolRegistrationView: View {
                         Text(store.isSaving ? "실험을 저장하고 있어요" : "프로토콜 없이 진행")
                             .font(.caption)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.labcord(.accent, size: .medium))
                 .disabled(store.isSaving)
                 .accessibilityIdentifier("entry-skip")
 
@@ -97,38 +101,14 @@ private struct EntryLoadingIndicator: View {
     }
 }
 
-private struct ProtocolSourceOption: View {
-    let title: String
-    let subtitle: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.footnote)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.bordered)
-    }
-}
-
 private struct EntryNextButton: View {
     var body: some View {
         Button {} label: {
             Text("다음")
                 .font(.body)
-                .frame(maxWidth: .infinity, minHeight: 50)
+                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.labcord(.primary, size: .large))
         .disabled(true)
         .accessibilityIdentifier("entry-next")
     }
