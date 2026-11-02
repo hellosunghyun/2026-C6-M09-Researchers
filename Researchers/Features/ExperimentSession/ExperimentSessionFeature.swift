@@ -23,6 +23,10 @@ struct ExperimentSessionFeature {
         var exitFailed = false
         var isCompleting = false
         var completionFailed = false
+        var completionRequestedAt: Date?
+        var isCommittingCompletion = false
+        var allowsAudioOnly = false
+        var cameraStartupFailed = false
 
         init(experimentID: UUID) {
             self.experimentID = experimentID
@@ -32,11 +36,17 @@ struct ExperimentSessionFeature {
         }
 
         var isReady: Bool {
-            permissions.camera.status == .authorized
+            (allowsAudioOnly || (permissions.camera.status == .authorized
+                && capture.previewConnector != nil))
                 && permissions.microphoneStatus == .authorized
                 && permissions.speechRecognitionStatus == .authorized
                 && !permissions.isRequesting
-                && capture.previewConnector != nil
+        }
+
+        var canContinueWithoutCamera: Bool {
+            !permissions.isRequesting && (cameraStartupFailed
+                || permissions.camera.status == .denied
+                || permissions.camera.status == .restricted)
         }
 
         var canCloseSession: Bool {
@@ -58,6 +68,9 @@ struct ExperimentSessionFeature {
         case videoStartRequested
         case appBecameActive
         case stopTapped
+        case continueCompletion
+        case continueWithoutCamera
+        case retryCameraRequested
         case stopCompleted
         case stopFailed
         case dismissStopFailure
@@ -92,6 +105,9 @@ struct ExperimentSessionFeature {
             SessionTimerFeature()
         }
 
+        completionReducer
+        cameraRecoveryReducer
+
         Reduce { state, action in
             switch action {
             case .loadDetail:
@@ -112,34 +128,8 @@ struct ExperimentSessionFeature {
                 state.permissionRequestGeneration += 1
                 return .none
 
-            case .stopTapped:
-                guard state.canCloseSession else { return .none }
-                state.isCompleting = true
-                state.timer.isClosing = true
-                state.completionFailed = false
-                let experimentID = state.experimentID
-                let completedAt = now
-                return .run { send in
-                    do {
-                        try await experimentClient.complete(experimentID, completedAt)
-                        await send(.stopCompleted)
-                    } catch {
-                        await send(.stopFailed)
-                    }
-                }
-
-            case .stopCompleted:
-                state.isCompleting = false
-                return .none
-
-            case .stopFailed:
-                state.isCompleting = false
-                state.timer.isClosing = false
-                state.completionFailed = true
-                return .send(.timer(.timerTick(now)))
-
-            case .dismissStopFailure:
-                state.completionFailed = false
+            case .stopTapped, .continueCompletion, .stopCompleted, .stopFailed,
+                 .dismissStopFailure:
                 return .none
 
             case .returnHomeTapped:
@@ -200,6 +190,7 @@ struct ExperimentSessionFeature {
                 return .send(.capture(.prepareVideoRecordingRequested))
 
             case .permissions(.camera(.statusUpdated(.authorized))):
+                guard !state.allowsAudioOnly else { return .none }
                 return .send(.capture(.cameraActivationRequested))
 
             case .capture(.cameraViewDisappeared):
@@ -209,10 +200,6 @@ struct ExperimentSessionFeature {
                 )
 
             case let .capture(.delegate(.permissionAccessFailed(kind))):
-                return .send(.permissions(.accessFailed(kind)))
-
-            case let .voice(.startPermissionFailed(id, kind)):
-                guard id == state.voice.sessionID else { return .none }
                 return .send(.permissions(.accessFailed(kind)))
 
             case .capture(.delegate(.voiceRequested)):
@@ -262,7 +249,8 @@ struct ExperimentSessionFeature {
                 }
 
             case .voiceStartRequested:
-                guard state.voice.phase == .hidden,
+                guard !state.isCompleting, !state.isReturningHome,
+                      state.voice.phase == .hidden,
                       state.capture.isCameraViewVisible,
                       !state.capture.isCapturingPhoto,
                       state.capture.capturedPhotoData == nil,
@@ -278,16 +266,21 @@ struct ExperimentSessionFeature {
                 )
 
             case .photoStartRequested:
-                guard state.voice.phase == .hidden else {
+                guard !state.isCompleting, !state.isReturningHome,
+                      state.voice.phase == .hidden else {
                     return .send(.capture(.cancelPhotoGesture))
                 }
                 return .send(.capture(.photoCaptureRequested))
 
             case .videoStartRequested:
-                guard state.voice.phase == .hidden else { return .none }
+                guard !state.isCompleting, !state.isReturningHome,
+                      state.voice.phase == .hidden else { return .none }
                 return .send(.capture(.videoRecordRequested))
 
             case .permissions, .voice, .capture, .timer:
+                return .none
+
+            case .continueWithoutCamera, .retryCameraRequested:
                 return .none
             }
         }
