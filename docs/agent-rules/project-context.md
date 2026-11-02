@@ -7,6 +7,7 @@
 
 | 항목 | 현재 설정·적용 |
 | --- | --- |
+| iPhone 앱 테마 | Researchers의 Debug·Release 모두 `UIUserInterfaceStyle=Light`로 고정. 기기의 다크 모드 설정을 따르지 않음 |
 | Watch 앱 경로 | 소스는 `ResearchWatchApp/`, 스킴은 `ResearchWatch Watch App` |
 | 로컬 패키지 | 단일 `Packages/ResearchersModules/Package.swift` 아래 제품 타깃 네 개와 `LabcordiOSTests` 테스트 타깃 |
 | 기기별 저장·통신 | 기기별 구현은 `LabcordiOS`·`LabcordWatchOS`에도 있음. 새 저장 구현의 경로는 해당 작업에서 팀과 확인 |
