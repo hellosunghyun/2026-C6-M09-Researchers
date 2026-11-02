@@ -4,10 +4,11 @@ import Foundation
 nonisolated enum ProtocolDocumentUnitExtractor {
     private static let atom = #"(?:°[CF]|℃|℉|°|%|R\.H\.?|RH|pH|OD(?:600)?|rpm|ppm|ppb|"#
         + #"㎖|㎕|㎛|㎜|㎝|㎞|㎟|㎠|㎡|㎢|㎣|㎤|㎥|㎎|㎏|㎐|㎑|㎒|㎓|㎩|㎪|㎫|"#
-        + #"mmHg|cmH2O|(?:[fpnµμumcdkMGT]|da)?"#
-        + #"(?:mol|mhos?|Pa|Hz|Da|IU|L|l|g|m|M|V|A|W|N|J|K|S)|"#
+        + #"mmHg|cmH2O|ohms?|(?:[fpnµμumcdhkMGT]|da)?"#
+        + #"(?:mol|mhos?|Pa|Hz|Da|IU|L|l|g|m|M|V|A|W|N|J|K|S|F|H|Ω|Ω|s)|"#
         + #"bar|atm|psi|bp|kb|nt|U|v/v|w/v|w/w|s|min|h)"#
-    private static let power = #"(?:\^?[−-]?[1-9]|[¹²³⁴⁵⁶⁷⁸⁹]|[⁻⁺][¹²³⁴⁵⁶⁷⁸⁹])?"#
+    // m2·m3 같은 관용 표기는 허용하고, 고차는 ^·위첨자로 명시해야 OCR의 F7과 구분합니다.
+    private static let power = #"(?:\^[−-]?[1-9]|[−-][1-9]|[23]|[¹²³⁴⁵⁶⁷⁸⁹]|[⁻⁺][¹²³⁴⁵⁶⁷⁸⁹])?"#
     private static let inversePower = #"(?:\^[−-][1-9]|[−-][1-9]|⁻[¹²³⁴⁵⁶⁷⁸⁹])"#
     private static let compound = atom + power
         + #"(?:[ \t]*(?:/|·|⋅)[ \t]*"# + atom + power
@@ -26,6 +27,11 @@ nonisolated enum ProtocolDocumentUnitExtractor {
             + #"batch|lot|sample|part|no)"#
             + #"[ \t.#:-]*[0-9]+(?:[.-][0-9]+)*[ \t]*\z"#, options: .caseInsensitive
     )
+    private static let unitNameMetadata = try? NSRegularExpression(
+        pattern: #"\b(?:author|creator|model|catalog|method|protocol|figure|table|"#
+            + #"sample|part|no|lot|batch|filename|file|title)[ \t:#.=−-]*"#
+            + #"(?:[0-9]+(?:[.-][0-9]+)*)?[ \t]*\z"#, options: .caseInsensitive
+    )
     private static let formulaSuffix = try? NSRegularExpression(
         pattern: #"^(?:\][ \t]*(?:[0-9]|[lo]\b)|-[lI][0o]\b)"#
     )
@@ -39,12 +45,18 @@ nonisolated enum ProtocolDocumentUnitExtractor {
         "A": #"(?:\b(?:current|amperes?)|전류|암페어)"#,
         "N": #"(?:\b(?:normality|force)|노르말|힘|수직항력)"#,
         "K": #"(?:\b(?:temperature|kelvin)|온도|켈빈)"#,
-        "S": #"(?:\b(?:conductance|conductivity|siemens)|전도도|컨덕턴스|지멘스)"#
+        "S": #"(?:\b(?:conductance|conductivity|siemens)|전도도|컨덕턴스|지멘스)"#,
+        "F": #"(?:\b(?:capacitance|farads?)|전기용량|정전용량|패럿)"#,
+        "H": #"(?:\b(?:inductance|henrys?|henries)|인덕턴스|헨리)"#,
+        "Ω": #"(?:\b(?:resistance|ohms?)|저항|옴)"#
     ].compactMapValues {
         try? NSRegularExpression(
             pattern: $0 + #"[ \t]*[:=]?[ \t]*(?:[(\[][ \t]*)?$"#,
             options: .caseInsensitive
         )
+    }
+    private static let electricalVariables = ["F": "C", "H": "L"].compactMapValues {
+        try? NSRegularExpression(pattern: #"(?:^|[^A-Za-z])"# + $0 + #"[ \t]*=[ \t]*$"#)
     }
     private static let measurementSymbols: Set<String> = [
         "pH", "RH", "R.H", "R.H.", "OD", "OD600", "rpm", "ppm", "ppb"
@@ -54,11 +66,17 @@ nonisolated enum ProtocolDocumentUnitExtractor {
         options: .caseInsensitive
     )
     private static let litreSymbol = try? NSRegularExpression(
-        pattern: #"(?<![A-Za-zµμ])([fpnµμumcdkMGT]|da)?l(?![A-Za-zµμ])"#
+        pattern: #"(?<![A-Za-zµμ])([fpnµμumcdhkMGT]|da)?l(?![A-Za-zµμ])"#
     )
     private static let microPrefix = try? NSRegularExpression(
-        pattern: #"(?<![A-Za-zµμ])u(?=(?:mol|mhos?|Pa|Hz|Da|IU|L|l|g|m|M|V|A|W|N|J|K|S)"#
+        pattern: #"(?<![A-Za-zµμ])u(?=(?:mol|mhos?|Pa|Hz|Da|IU|L|l|g|m|M|V|A|W|N|J|K|S|F|H|Ω|Ω|s)"#
             + #"(?![A-Za-zµμ]))"#
+    )
+    private static let ohmName = try? NSRegularExpression(
+        pattern: #"(?<![A-Za-zµμ])ohms?(?![A-Za-zµμ])"#
+    )
+    private static let mhoPlural = try? NSRegularExpression(
+        pattern: #"(?<![A-Za-zµμ])([fpnµμumcdhkMGT]|da)?mhos(?![A-Za-zµμ])"#
     )
     private static let durations: Set<String> = ["h", "min", "s"]
     private static let dimension = #"(?:길이|높이|거리|깊이|너비|폭|두께|"#
@@ -102,7 +120,7 @@ nonisolated enum ProtocolDocumentUnitExtractor {
         result.glossaryTerms.removeAll { measuredKeys.contains(key($0)) }
         var seen: Set<String> = []
         result.units = (terms.units + measured).filter { seen.insert(key($0)).inserted }
-        return result
+        return UnitLabelReview.apply(to: result, source: source)
     }
 
     static func isUnit(_ value: String) -> Bool {
@@ -133,6 +151,11 @@ nonisolated enum ProtocolDocumentUnitExtractor {
         _ unit: String, at range: Range<String.Index>, source: String
     ) -> Bool {
         if unit == "m" { return isMetre(at: range, in: source) }
+        if unit == "ohm" || unit == "ohms" {
+            let prefix = String(source[..<range.lowerBound].suffix(64))
+            let fullRange = NSRange(prefix.startIndex..., in: prefix)
+            return unitNameMetadata?.firstMatch(in: prefix, range: fullRange) == nil
+        }
         if measurementSymbols.contains(unit) || unit.contains("%") || unit.contains("°")
             || unit.precomposedStringWithCompatibilityMapping != unit { return true }
         if unit.contains("/") || unit.contains("·") || unit.contains("⋅") { return true }
@@ -145,12 +168,26 @@ nonisolated enum ProtocolDocumentUnitExtractor {
                                      range: NSRange(suffix.startIndex..., in: suffix)) != nil {
             return false
         }
+        // 붙여 쓴 H·F는 원소 및 OH의 OCR(0H)과 겹쳐 전기 측정 맥락도 확인합니다.
+        if unit == "H" || unit == "F", prefix.last?.isNumber == true {
+            return hasElectricalQuantityContext(unit, prefix: prefix)
+        }
         if hasQuantity(prefix) { return true }
         if let specific = specificHeaders[unit] {
             return specific.firstMatch(in: prefix,
                                        range: NSRange(prefix.startIndex..., in: prefix)) != nil
         }
         return isHeader(prefix: prefix, suffix: suffix)
+    }
+
+    private static func hasElectricalQuantityContext(_ unit: String, prefix: String) -> Bool {
+        let range = NSRange(prefix.startIndex..., in: prefix)
+        guard let quantityMatch = quantity?.firstMatch(in: prefix, range: range),
+              let quantityRange = Range(quantityMatch.range, in: prefix) else { return false }
+        let context = String(prefix[..<quantityRange.lowerBound])
+        let contextRange = NSRange(context.startIndex..., in: context)
+        return specificHeaders[unit]?.firstMatch(in: context, range: contextRange) != nil
+            || electricalVariables[unit]?.firstMatch(in: context, range: contextRange) != nil
     }
 
     private static func hasQuantity(_ prefix: String) -> Bool {
@@ -187,8 +224,10 @@ nonisolated enum ProtocolDocumentUnitExtractor {
     static func key(_ value: String) -> String {
         var key = value.precomposedStringWithCompatibilityMapping
             .replacingOccurrences(of: "µ", with: "μ")
-        // 낱말 내부의 l은 건드리지 않고 단위 성분의 l·u 표기만 통일합니다.
-        for (expression, replacement) in [(litreSymbol, "$1L"), (microPrefix, "μ")] {
+        // 단위 성분의 l·u, 같은 단위의 기호·복수 표기만 통일하고 배율은 유지합니다.
+        let replacements = [(litreSymbol, "$1L"), (microPrefix, "μ"),
+                            (ohmName, "Ω"), (mhoPlural, "$1mho")]
+        for (expression, replacement) in replacements {
             if let expression {
                 key = expression.stringByReplacingMatches(
                     in: key, range: NSRange(key.startIndex..., in: key),
@@ -199,5 +238,124 @@ nonisolated enum ProtocolDocumentUnitExtractor {
         return key
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "\t", with: "")
+    }
+}
+
+/// 정규식 미지원 단위는 유지하고, 원문으로 확인되는 변수·OCR 조각만 재분류합니다.
+nonisolated private enum UnitLabelReview {
+    private static let charge = try? NSRegularExpression(pattern: #"^[0-9]+[+−-]$"#)
+    private static let variable = try? NSRegularExpression(
+        pattern: #"(?m)^[ \t]*([A-Z][A-Za-z0-9_]{0,3})[ \t]*=[ \t]*measured\b[^\r\n]{1,120}"#
+    )
+    private static let reading = try? NSRegularExpression(
+        pattern: #"([0-9]+(?:[.,][0-9]+)?)[ \t]*\z"#
+    )
+    private static let celsius = try? NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9.,])([0-9]+(?:[.,][0-9]+)?)[ \t]*°C(?![A-Za-z])"#
+    )
+
+    static func apply(to terms: ProtocolExtractedTerms, source: String) -> ProtocolExtractedTerms {
+        var result = terms
+        let variables = definedVariables(in: source)
+        var glossaryKeys = Set(result.glossaryTerms.map(ProtocolTermNormalizer.key))
+        result.units = terms.units.filter { term in
+            guard !ProtocolTermNormalizer.isUnit(term) else { return true }
+            let range = NSRange(term.startIndex..., in: term)
+            let confirmed = charge?.firstMatch(in: term, range: range) != nil
+                || variables.contains(term) || onlyDocumentIdentifier(term, in: source)
+            let isCelsiusArtifact = term == "EC" || term == "tEC"
+            if confirmed || isCelsiusArtifact { result.usedFallback = true }
+            let shouldMove = confirmed
+                || (isCelsiusArtifact && pairedCelsiusNotation(term, in: source))
+            guard shouldMove else {
+                return true
+            }
+            if glossaryKeys.insert(ProtocolTermNormalizer.key(term)).inserted {
+                result.glossaryTerms.append(term)
+            }
+            return false
+        }
+        return result
+    }
+
+    private static func definedVariables(in source: String) -> Set<String> {
+        guard let variable else { return [] }
+        return Set(variable.matches(in: source, range: NSRange(source.startIndex..., in: source))
+            .compactMap { match in
+                Range(match.range(at: 1), in: source).map { String(source[$0]) }
+            })
+    }
+
+    private static func onlyDocumentIdentifier(_ term: String, in source: String) -> Bool {
+        guard term == "ROM" else { return false }
+        let ranges = occurrences(of: term, in: source)
+        return !ranges.isEmpty && ranges.allSatisfy {
+            source[..<$0.lowerBound].hasSuffix("CD-")
+                && !isLetter(source[$0.upperBound...].first)
+        }
+    }
+
+    private static func pairedCelsiusNotation(_ term: String, in source: String) -> Bool {
+        let ranges = occurrences(of: term, in: source).filter { range in
+            !isLetter(source[..<range.lowerBound].last)
+                && !isLetter(source[range.upperBound...].first)
+        }
+        guard !ranges.isEmpty else { return false }
+        var matchedReading = false
+        for range in ranges {
+            let start = source.index(range.lowerBound, offsetBy: -256,
+                                     limitedBy: source.startIndex) ?? source.startIndex
+            let end = source.index(range.upperBound, offsetBy: 256,
+                                   limitedBy: source.endIndex) ?? source.endIndex
+            let nearby = String(source[start..<end])
+            if term == "tEC" {
+                guard nearby.contains("t°C") else { return false }
+                matchedReading = true
+                continue
+            }
+            let prefix = String(source[..<range.lowerBound].suffix(32))
+            let prefixRange = NSRange(prefix.startIndex..., in: prefix)
+            if let match = reading?.firstMatch(in: prefix, range: prefixRange),
+               let value = Range(match.range(at: 1), in: prefix) {
+                guard containsCelsius(String(prefix[value]), in: nearby) else { return false }
+                matchedReading = true
+            } else {
+                let line = source[source.lineRange(for: range)]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let counterpart = line.replacingOccurrences(of: "EC", with: "°C")
+                let lines = nearby.components(separatedBy: .newlines).map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+                guard lines.contains(counterpart) else { return false }
+            }
+        }
+        return matchedReading
+    }
+
+    private static func containsCelsius(_ value: String, in source: String) -> Bool {
+        guard let celsius else { return false }
+        return celsius.matches(in: source, range: NSRange(source.startIndex..., in: source))
+            .contains { match in
+                guard let range = Range(match.range(at: 1), in: source) else { return false }
+                return source[range] == value
+            }
+    }
+
+    private static func occurrences(
+        of term: String, in source: String
+    ) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var start = source.startIndex
+        while let range = source.range(of: term, range: start..<source.endIndex) {
+            ranges.append(range)
+            start = range.upperBound
+        }
+        return ranges
+    }
+
+    private static func isLetter(_ character: Character?) -> Bool {
+        guard let character, character.unicodeScalars.count == 1,
+              let scalar = character.unicodeScalars.first else { return false }
+        return (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
     }
 }

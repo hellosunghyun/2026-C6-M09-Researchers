@@ -3,6 +3,44 @@ import Foundation
 import XCTest
 
 final class ProtocolDocumentUnitExtractorTests: XCTestCase {
+    func testElectricalAndSubsecondMeasurementUnitsDoNotBecomeTimers() {
+        let source = "RC 회로: R=1 kΩ, C=100 µF, L=20mH, 지연10ms, 펄스2µs, 3ns."
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source),
+                       ["kΩ", "µF", "mH", "ms", "µs", "ns"])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: source), [])
+        XCTAssertEqual(ProtocolTermNormalizer.key("uF"), ProtocolTermNormalizer.key("µF"))
+        XCTAssertEqual(ProtocolTermNormalizer.key("uH"), ProtocolTermNormalizer.key("µH"))
+    }
+
+    func testChemicalFormulasAndFigureLabelsDoNotBecomeElectricalUnits() {
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "C6H6 + H2O + HF. Figure 2F, METHOD 20H."
+        ), [])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "capacitance (F), inductance (H), resistance (Ω)"
+        ), ["F", "H", "Ω"])
+    }
+
+    func testOCRReagentFragmentsDoNotBecomeHighOrderElectricalUnits() {
+        // 실제 아스피린 PDF의 증류수 OCR 조각과 명시적인 수학 표기를 구분합니다.
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "Li(phosphoric acid), 5 F7(distilled water), 증류수(distilled water)"
+        ), [])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "1 F^-1; 2 F-1; 3 F⁻¹; 4 F^7; 5 F⁷; 6 W/m2; 7 kg/m3; 8 m/s2"
+        ), ["F^-1", "F-1", "F⁻¹", "F^7", "F⁷", "W/m2", "kg/m3", "m/s2"])
+    }
+
+    func testAttachedHydrogenAndOHOCRRequireElectricalMeasurementContext() {
+        // 완충용액 PDF의 OH를 0H로 읽은 구절을 헨리로 보충하지 않습니다.
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "혈액 속에 0H\n혈액 속에 녹아 들어가더라도. 2H + 2F → 2HF."
+        ), [])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "20mH; 100µF; 1 H; capacitance10F; L=2H; C=3F; inductance4H"
+        ), ["mH", "µF", "H", "F"])
+    }
+
     func testAspirinMeasurementsAreRecoveredWithoutSelectingTheirNumbers() {
         let source = """
             바이엘 아스피린, 500mg
@@ -55,7 +93,7 @@ final class ProtocolDocumentUnitExtractorTests: XCTestCase {
             COOH + H2O → CH3COOH. R. Wm? 70S protein 3ms
             살리실산(salicylic acid), 자동적설계, 검정
             """
-        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), [])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), ["ms"])
     }
 
     func testSupplementMovesOnlyExactUnitTermsAndPreservesFallbackAndOrder() {
@@ -158,7 +196,7 @@ final class ProtocolDocumentUnitExtractorTests: XCTestCase {
             uS/cm Results % %
             """
         XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), [
-            "uS", "°C", "mS/m", "umhos/cm", "uS/cm", "umho/cm", "S", "%"
+            "uS", "°C", "mS/m", "umhos/cm", "uS/cm", "S", "%"
         ])
     }
 
@@ -213,5 +251,138 @@ final class ProtocolDocumentUnitExtractorTests: XCTestCase {
         let terms = ProtocolExtractedTerms(units: ["µS/cm", "mL", "μL"])
         let result = ProtocolDocumentUnitExtractor.supplement(terms, from: source)
         XCTAssertEqual(result.units, ["µS/cm", "mL", "μL", "mM", "mm", "M"])
+    }
+
+}
+
+extension ProtocolDocumentUnitExtractorTests {
+    func testOhmNamesKeepTheFirstActualSpellingWithoutAcceptingNamesOrMetadata() {
+        let source = "Rm = measured resistance of sample, ohms; the reciprocal of the ohm. 1 Ω"
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), ["ohms"])
+        for unit in ["ohm", "ohms", "Ω", "Ω"] {
+            XCTAssertEqual(ProtocolTermNormalizer.key(unit), "Ω", unit)
+        }
+        XCTAssertNotEqual(ProtocolTermNormalizer.key("Ohm"), ProtocolTermNormalizer.key("ohm"))
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "Ohm's law; ohmic; rheohms; AUTHOR: ohm\nMODEL ohm\nMETHOD 9050ohms"
+        ), [])
+    }
+
+    func testMhoPluralAliasesKeepTheirPrefixesAndFirstSourceSpelling() {
+        XCTAssertEqual(ProtocolTermNormalizer.key("µmhos/cm"),
+                       ProtocolTermNormalizer.key("μmho/cm"))
+        XCTAssertNotEqual(ProtocolTermNormalizer.key("mhos"), ProtocolTermNormalizer.key("mmhos"))
+        XCTAssertNotEqual(ProtocolTermNormalizer.key("mho"), ProtocolTermNormalizer.key("siemens"))
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(
+            from: "1 mhos; 2 mho; 3 mmhos; 4 mmho; 5 µmhos/cm; 6 µmho/cm"
+        ), ["mhos", "mmhos", "µmhos/cm"])
+    }
+
+    func testWeatherPressureRecoversHectopascalsFromActualSource() {
+        let source = """
+            실내검정 검정점은 800, 850, 900, 950, 980, 1010, 1040
+            hPa로 하며, 현장검정은 실황 3회를 비교하여 검정한다.
+            실내검정의 검정점은 950, 980, 1010, 1040 hPa이다.
+            """
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), ["hPa"])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: source), [])
+    }
+
+    func testHectoUnitsDoNotAcceptIdentifiersOrBecomeHours() {
+        let source = "METHOD 9050hPa; Model 1040hPa; sample1040hPa; 1040hPa에서 2h 동안 측정"
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), ["hPa"])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: source), [7_200])
+        XCTAssertTrue(ProtocolTermNormalizer.isUnit("hPa"))
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "METHOD 9050hPa"), [])
+    }
+
+    func testHectolitreComparisonKeepsTheFirstActualSpelling() {
+        XCTAssertEqual(ProtocolTermNormalizer.key("hl"), ProtocolTermNormalizer.key("hL"))
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "1 hl; 2 hL; 3 hPa"),
+                       ["hl", "hPa"])
+    }
+
+    func testConfirmedNonUnitLabelsMoveToGlossaryWithoutLosingTermsOrOrder() {
+        let source = """
+            where:
+            Km = measured conductivity, uS at t°C
+            Rm = measured resistance of sample, ohms
+            CD-ROM 9050A - 1
+            [H,0+]
+            """
+        let terms = ProtocolExtractedTerms(
+            glossaryTerms: ["교반"],
+            units: ["Km", "siemens", "0+", "Rm", "ROM", "millisiemens", "μL"]
+        )
+        let result = ProtocolDocumentUnitExtractor.supplement(terms, from: source)
+        XCTAssertEqual(result.glossaryTerms, ["교반", "Km", "0+", "Rm", "ROM"])
+        XCTAssertEqual(result.units, ["siemens", "millisiemens", "μL", "uS", "ohms"])
+        XCTAssertTrue(Set(terms.all).isSubset(of: Set(result.all)))
+        XCTAssertTrue(result.usedFallback)
+    }
+
+    func testKnownSymbolsAndUnrecognizedUnitNamesKeepModelLabels() {
+        let units = ["siemens", "millisiemens", "ohm", "knot", "tesla", "mM", "mm", "K"]
+        let source = "K = measured temperature. Units: siemens, millisiemens, ohm, knot, tesla."
+        let result = ProtocolDocumentUnitExtractor.supplement(
+            ProtocolExtractedTerms(units: units), from: source
+        )
+        XCTAssertEqual(result.units, units)
+        XCTAssertEqual(result.glossaryTerms, [])
+        XCTAssertFalse(result.usedFallback)
+    }
+
+    func testDocumentFragmentNeedsEveryOccurrenceInsideTheIdentifier() {
+        let result = ProtocolDocumentUnitExtractor.supplement(
+            ProtocolExtractedTerms(units: ["ROM"]),
+            from: "CD-ROM 9050A. ROM은 별도 장치의 명칭이다."
+        )
+        XCTAssertEqual(result.units, ["ROM"])
+        XCTAssertEqual(result.glossaryTerms, [])
+        XCTAssertFalse(result.usedFallback)
+    }
+
+    func testCelsiusOCRNeedsMatchingOriginalReadingsAndDoesNotTranslateTerms() {
+        let source = """
+            at 25°C.
+            at 25EC.
+            nearest 0.1°C.
+            nearest 0.1EC.
+            measured conductivity, uS at t°C
+            measured conductivity, uS at tEC
+            t = observed temperature, °C.
+            t = observed temperature, EC.
+            """
+        let result = ProtocolDocumentUnitExtractor.supplement(
+            ProtocolExtractedTerms(glossaryTerms: ["교반"], units: ["EC", "tEC", "siemens"]),
+            from: source
+        )
+        XCTAssertEqual(result.glossaryTerms, ["교반", "EC", "tEC"])
+        XCTAssertEqual(result.units, ["siemens", "°C", "uS"])
+        XCTAssertTrue(result.usedFallback)
+    }
+
+    func testAmbiguousCelsiusOCRKeepsClassificationAndRequestsReview() {
+        let result = ProtocolDocumentUnitExtractor.supplement(
+            ProtocolExtractedTerms(units: ["EC", "tEC"]),
+            from: "25EC; 30°C; tEC."
+        )
+        XCTAssertEqual(result.units, ["EC", "tEC", "°C"])
+        XCTAssertEqual(result.glossaryTerms, [])
+        XCTAssertTrue(result.usedFallback)
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.supplement(
+            ProtocolExtractedTerms(units: ["EC"]), from: "25EC"
+        ).units, ["EC"])
+    }
+
+    func testReclassificationAndUnitSupplementDoNotDuplicateExistingTerms() {
+        let source = "Km = measured conductivity. 1 uS/cm; 2 µS/cm; 3 μS/cm."
+        let result = ProtocolDocumentUnitExtractor.supplement(
+            ProtocolExtractedTerms(glossaryTerms: ["Km", "교반"], units: ["Km", "µS/cm"]),
+            from: source
+        )
+        XCTAssertEqual(result.glossaryTerms, ["Km", "교반"])
+        XCTAssertEqual(result.units, ["µS/cm"])
+        XCTAssertTrue(result.usedFallback)
     }
 }
