@@ -65,8 +65,15 @@ struct ProtocolReviewView: View {
 
     private var titleField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("실험 이름 *")
-                .typography(Typography.calloutSemiBold)
+            HStack(spacing: 0) {
+                Text("실험 이름 ")
+                Text("*").foregroundStyle(Color(
+                    "General/Feedback/Error/Foreground",
+                    bundle: LabcordDesignSystemResources.bundle
+                ))
+            }
+            .typography(Typography.calloutSemiBold)
+            .accessibilityElement(children: .combine)
             TextField("실험 이름을 입력해 주세요", text: Binding(
                 get: { store.title }, set: { store.send(.titleChanged($0)) }
             ))
@@ -120,7 +127,7 @@ struct ProtocolReviewView: View {
                         store.terms[category, default: []], selection: $selectedTermIDs,
                         label: { $0.value },
                         onRemove: { store.send(.removeTerm(category, $0.id)) },
-                        onAdd: { store.send(.editTerm(category)); termFocused = true }
+                        onAdd: addTermAction(for: category)
                     )
                     if store.inputCategory == category {
                         termInput
@@ -144,11 +151,24 @@ struct ProtocolReviewView: View {
                 termFocused = true
             }
             HStack {
-                if let error = store.termError { Text(error).foregroundStyle(.red) }
+                if let error = store.termError { Text(error) }
                 Spacer()
                 Text("\(store.termInput.count)/22")
             }
             .typography(Typography.subheadline)
+            .foregroundStyle(Color(
+                store.termError == nil
+                    ? "General/Label/Tertiary" : "General/Feedback/Error/Foreground",
+                bundle: LabcordDesignSystemResources.bundle
+            ))
+        }
+    }
+
+    private func addTermAction(for category: ProtocolTermCategory) -> (() -> Void)? {
+        guard store.inputCategory != category else { return nil }
+        return {
+            store.send(.editTerm(category))
+            termFocused = true
         }
     }
 
