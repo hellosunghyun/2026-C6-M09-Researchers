@@ -22,7 +22,8 @@ nonisolated final class R117Ranker {
         text: String,
         spans: [R117CandidateSpan],
         observation: ((String, Double) -> Void)? = nil,
-        includeTrace: Bool = false
+        includeTrace: Bool = false,
+        candidateProgress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> Result {
         try Task.checkCancellation()
         guard !spans.isEmpty else { throw R117RuntimeError.invalidCandidate }
@@ -39,7 +40,8 @@ nonisolated final class R117Ranker {
             )
         }
         let components = try teacherComponents(
-            text: text, spans: spans, ranges: ranges, observation: observation
+            text: text, spans: spans, ranges: ranges, observation: observation,
+            candidateProgress: candidateProgress
         )
         let combined = try measure("score_combination", observation) {
             try R117ScoringMath.combine(components, headLogits: head)
@@ -66,7 +68,8 @@ nonisolated final class R117Ranker {
         text: String,
         spans: [R117CandidateSpan],
         ranges: [Range<Int>],
-        observation: ((String, Double) -> Void)?
+        observation: ((String, Double) -> Void)?,
+        candidateProgress: (@Sendable (Int, Int) -> Void)?
     ) throws -> R117ScoringMath.Components {
         let teacher = try measure("teacher_document_encoder", observation) {
             try encoder.document(text: text, function: "teacher_taskfit")
@@ -102,7 +105,7 @@ nonisolated final class R117Ranker {
             try runner.predictHead(function: "teacher_purpose", features: purposeRelative)
         }
         let last2Features = try measure("teacher_last2_features", observation) {
-            try encoder.last2(text: text, spans: ranges)
+            try encoder.last2(text: text, spans: ranges, progress: candidateProgress)
         }
         let last2 = try measure("teacher_last2_head", observation) {
             try runner.predictHead(

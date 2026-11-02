@@ -31,6 +31,8 @@ struct ProtocolAnalysisProgressView: View {
             case .preparingRanking: return "용어 검토를 준비하고 있어요"
             case let .rankingCandidates(count):
                 return "용어 후보 \(count.formatted())개를 검토하고 있어요"
+            case let .rankingProgress(completed, total):
+                return "용어 문맥을 검토하고 있어요 · \(completed)/\(total)개 확인"
             case let .classifyingTerms(completed, total):
                 return "추출한 용어를 분류하고 있어요 · \(completed)/\(total)개 확인"
             case .organizingTerms: return "용어 분류 결과를 정리하고 있어요"

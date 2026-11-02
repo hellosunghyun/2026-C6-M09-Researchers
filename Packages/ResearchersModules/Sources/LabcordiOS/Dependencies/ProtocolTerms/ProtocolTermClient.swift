@@ -8,6 +8,7 @@ nonisolated public enum ProtocolTermProgress: Equatable, Sendable {
     case extractingCandidates
     case preparingRanking
     case rankingCandidates(Int)
+    case rankingProgress(completed: Int, total: Int)
     case classifyingTerms(completed: Int, total: Int)
     case organizingTerms
 }

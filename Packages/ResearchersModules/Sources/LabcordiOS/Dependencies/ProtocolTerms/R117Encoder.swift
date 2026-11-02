@@ -83,10 +83,13 @@ nonisolated final class R117Encoder {
         return Document(offsets: encoding.offsets, vectors: vectors)
     }
 
-    func last2(text: String, spans: [Range<Int>]) throws -> [[Float]] {
+    func last2(
+        text: String, spans: [Range<Int>],
+        progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) throws -> [[Float]] {
         let scalars = Array(text.unicodeScalars)
         let model = try runner.model(function: "teacher_last2")
-        return try spans.map { range in
+        return try spans.enumerated().map { index, range in
             try Task.checkCancellation()
             let left = max(0, range.lowerBound - 160)
             let right = min(scalars.count, range.upperBound + 160)
@@ -108,7 +111,12 @@ nonisolated final class R117Encoder {
             for index in selected {
                 for column in 0..<384 { pooled[column] += hidden[index + 1][column] }
             }
-            return pooled.map { $0 / Float(selected.count) }
+            let result = pooled.map { $0 / Float(selected.count) }
+            let completed = index + 1
+            if completed.isMultiple(of: 20) || completed == spans.count {
+                progress?(completed, spans.count)
+            }
+            return result
         }
     }
 

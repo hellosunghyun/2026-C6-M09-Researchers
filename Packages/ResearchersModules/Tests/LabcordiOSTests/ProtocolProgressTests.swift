@@ -114,6 +114,16 @@ final class ProtocolProgressTests: XCTestCase {
         }
         XCTAssertGreaterThan(count, 0)
         XCTAssertGreaterThanOrEqual(count, result.count)
+        let rankingProgress = received.enumerated().compactMap { index, event in
+            if case let .rankingProgress(completed, total) = event {
+                return (index, completed, total)
+            }
+            return nil
+        }
+        let last = try XCTUnwrap(rankingProgress.last)
+        XCTAssertGreaterThan(last.0, ranking)
+        XCTAssertEqual(last.1, count)
+        XCTAssertEqual(last.2, count)
     }
 
     func testEmptyClassificationEmitsOnlyOrganizingStage() async throws {

@@ -70,7 +70,7 @@ private actor R117ExtractionRuntime {
         let ranker = try await preparedRanker(resources: resources, progress: progress)
         await progress?(.rankingCandidates(groups.count))
         try Task.checkCancellation()
-        let result = try ranker.scores(text: text, spans: spans)
+        let result = try await score(ranker, text: text, spans: spans, progress: progress)
         let candidates = try groups.enumerated().map { index, group in
             try group.selectionCandidate(index: index, source: text,
                                          frozenScore: result.frozenScores[index])
@@ -80,6 +80,34 @@ private actor R117ExtractionRuntime {
         )
         try Task.checkCancellation()
         return selected.map { candidates[$0].text }
+    }
+
+    private func score(
+        _ ranker: R117Ranker, text: String, spans: [R117CandidateSpan],
+        progress: ProtocolTermClient.Progress?
+    ) async throws -> R117Ranker.Result {
+        guard let progress else { return try ranker.scores(text: text, spans: spans) }
+        let (events, continuation) = AsyncStream<(Int, Int)>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let forwarder = Task.detached {
+            for await (completed, total) in events {
+                await progress(.rankingProgress(completed: completed, total: total))
+            }
+        }
+        do {
+            let result = try ranker.scores(text: text, spans: spans) { completed, total in
+                continuation.yield((completed, total))
+            }
+            continuation.finish()
+            await forwarder.value
+            return result
+        } catch {
+            continuation.finish()
+            forwarder.cancel()
+            await forwarder.value
+            throw error
+        }
     }
 
     private func preparedRanker(
