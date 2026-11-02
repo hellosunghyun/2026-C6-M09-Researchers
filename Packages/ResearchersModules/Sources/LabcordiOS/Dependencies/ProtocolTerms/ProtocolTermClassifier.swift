@@ -37,39 +37,112 @@ nonisolated public enum ProtocolTermClassifier {
     private static let batchSize = 25
     private static let contextLimit = 1_200
 
+    public enum ClassificationError: Swift.Error {
+        case modelNotReady
+        case invalidCheckpoint
+    }
+
     public static func classify(
         _ terms: [String], context: String, progress: ProtocolTermClient.Progress? = nil
     ) async throws -> ProtocolExtractedTerms {
+        try await classify(terms, context: context, seed: nil, progress: progress) { _ in }
+    }
+
+    public static func classify(
+        _ terms: [String], context: String, seed: ProtocolExtractedTerms?,
+        progress: ProtocolTermClient.Progress? = nil,
+        checkpoint: ProtocolTermClient.Checkpoint
+    ) async throws -> ProtocolExtractedTerms {
         try Task.checkCancellation()
-        guard !terms.isEmpty else {
-            await progress?(.organizingTerms)
-            try Task.checkCancellation()
-            return ProtocolExtractedTerms()
+        let existing = seed ?? ProtocolExtractedTerms()
+        let completed = Set(existing.all)
+        guard completed.isSubset(of: Set(terms)), completed.count == existing.all.count,
+              Set(terms.prefix(completed.count)) == completed else {
+            throw ClassificationError.invalidCheckpoint
         }
-        var labels: [String: ProtocolTermLabel.Category] = [:]
-        if SystemLanguageModel.default.isAvailable {
-            await progress?(.classifyingTerms(completed: 0, total: terms.count))
-            try Task.checkCancellation()
-            let excerpt = String(context.prefix(contextLimit))
-            for start in stride(from: 0, to: terms.count, by: batchSize) {
-                try Task.checkCancellation()
-                let end = min(start + batchSize, terms.count)
-                let batch = Array(terms[start..<end])
-                do {
-                    let result = try await classifyBatch(batch, excerpt: excerpt)
-                    try Task.checkCancellation()
-                    labels.merge(validatedLabels(result, for: batch)) { _, new in new }
-                } catch {
-                    try Task.checkCancellation()
-                }
-                await progress?(.classifyingTerms(completed: end, total: terms.count))
+        var labels = seedLabels(existing)
+        var usedFallback = existing.usedFallback
+        if !terms.isEmpty && completed.count < terms.count {
+            switch SystemLanguageModel.default.availability {
+            case .available:
+                var state = ClassificationState(labels: labels, usedFallback: usedFallback)
+                try await classifyRemaining(
+                    terms, context: context, state: &state,
+                    progress: progress, checkpoint: checkpoint
+                )
+                labels = state.labels
+                usedFallback = state.usedFallback
+            case .unavailable(.modelNotReady):
+                throw ClassificationError.modelNotReady
+            case .unavailable:
+                usedFallback = true
+                let result = group(terms, labels: labels, usedFallback: usedFallback)
+                try await checkpoint(result)
+            @unknown default:
+                throw ClassificationError.modelNotReady
             }
         }
-
         try Task.checkCancellation()
         await progress?(.organizingTerms)
         try Task.checkCancellation()
-        return group(terms, labels: labels)
+        return group(terms, labels: labels, usedFallback: usedFallback)
+    }
+
+    private static func seedLabels(
+        _ seed: ProtocolExtractedTerms
+    ) -> [String: ProtocolTermLabel.Category] {
+        var labels: [String: ProtocolTermLabel.Category] = [:]
+        for term in seed.materials { labels[term] = .material }
+        for term in seed.samples { labels[term] = .sample }
+        for term in seed.glossaryTerms { labels[term] = .glossary }
+        for term in seed.units { labels[term] = .unit }
+        return labels
+    }
+
+    private struct ClassificationState {
+        var labels: [String: ProtocolTermLabel.Category]
+        var usedFallback: Bool
+    }
+
+    private static func classifyRemaining(
+        _ terms: [String], context: String, state: inout ClassificationState,
+        progress: ProtocolTermClient.Progress?, checkpoint: ProtocolTermClient.Checkpoint
+    ) async throws {
+        let start = state.labels.count
+        await progress?(.classifyingTerms(completed: start, total: terms.count))
+        for position in stride(from: start, to: terms.count, by: batchSize) {
+            try Task.checkCancellation()
+            let end = min(position + batchSize, terms.count)
+            let batch = Array(terms[position..<end])
+            let prediction = try await classifyBatch(
+                batch, excerpt: excerpt(context, terms: batch)
+            )
+            try Task.checkCancellation()
+            state.labels.merge(validatedLabels(prediction, for: batch)) { _, new in new }
+            if batch.contains(where: { state.labels[$0] == nil }) { state.usedFallback = true }
+            let result = group(
+                Array(terms.prefix(end)), labels: state.labels, usedFallback: state.usedFallback
+            )
+            try await checkpoint(result)
+            await progress?(.classifyingTerms(completed: end, total: terms.count))
+        }
+    }
+
+    private static func excerpt(_ context: String, terms: [String]) -> String {
+        var excerpts: [String] = []
+        var remaining = contextLimit
+        for term in terms where remaining > 0 {
+            guard let range = context.range(of: term) else { continue }
+            let start = context.index(range.lowerBound, offsetBy: -40,
+                                      limitedBy: context.startIndex) ?? context.startIndex
+            let end = context.index(range.upperBound, offsetBy: 40,
+                                    limitedBy: context.endIndex) ?? context.endIndex
+            let snippet = String(context[start..<end].prefix(remaining))
+            excerpts.append(snippet)
+            remaining -= snippet.count
+        }
+        return excerpts.isEmpty ? String(context.prefix(contextLimit))
+            : excerpts.joined(separator: "\n")
     }
 
     private static func validatedLabels(
@@ -85,10 +158,11 @@ nonisolated public enum ProtocolTermClassifier {
     }
 
     private static func group(
-        _ terms: [String], labels: [String: ProtocolTermLabel.Category]
+        _ terms: [String], labels: [String: ProtocolTermLabel.Category],
+        usedFallback: Bool = false
     ) -> ProtocolExtractedTerms {
         var grouped = ProtocolExtractedTerms(
-            usedFallback: terms.contains { labels[$0] == nil }
+            usedFallback: usedFallback || terms.contains { labels[$0] == nil }
         )
         for term in terms {
             let category = labels[term] ?? fallbackCategory(term)
