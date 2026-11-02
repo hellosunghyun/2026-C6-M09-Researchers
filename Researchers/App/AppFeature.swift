@@ -122,10 +122,11 @@ struct AppFeature {
                       let registration = state.path[id: id, case: \.registration],
                       registration.analysisID == nil,
                       !registration.successfulResults.isEmpty else { return .none }
+                var seenSeconds = Set<Int>()
                 let seconds = registration.successfulResults.flatMap { item -> [Int] in
                     guard let text = item.extractedText else { return [] }
                     return ProtocolTimerExtractor.extract(from: text)
-                }
+                }.filter { seenSeconds.insert($0).inserted }
                 let terms = registration.extractedTerms.mapValues { values in
                     values.map { ProtocolReviewTerm(id: uuid(), value: $0) }
                 }

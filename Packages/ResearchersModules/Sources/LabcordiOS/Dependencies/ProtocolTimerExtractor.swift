@@ -1,144 +1,141 @@
 import Foundation
 
-/// Extracts explicit durations in text order. Ambiguous formats are left for editing.
+/// 명확한 지속시간을 초로 통일하고, 처음 나온 순서대로 중복 없이 반환합니다.
 nonisolated public enum ProtocolTimerExtractor {
     private static let units =
         "(?:hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s|시간|분|초)"
     private static let number = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?"
-    private static let rangePattern =
-        "(?<![0-9.,:\\-])(\(number))\\s*(?:~|–|—|-|\\bto\\b)" +
-        "\\s*(\(number))\\s*(\(units))(?![A-Za-z]|의)"
+    private static let horizontalSpace = "[ \\t]*"
     private static let itemPattern =
-        "(?<![0-9.,:])(\(number))\\s*(\(units))(?![A-Za-z]|의)"
-    private static let combinedPattern =
-        "\(itemPattern)(?:\\s+\(itemPattern)){0,2}"
+        "(?<![0-9.,:])(\(number))\(horizontalSpace)(\(units))(?![A-Za-z])"
+    private static let rangePattern =
+        "(?<![0-9.,:])\(number)\(horizontalSpace)\(units)?" +
+        "(?:\(horizontalSpace)\(number)\(horizontalSpace)\(units)){0,2}" +
+        "\(horizontalSpace)(?:~|〜|–|—|-|\\bto\\b|에서|부터)\(horizontalSpace)" +
+        "\(number)\(horizontalSpace)\(units)" +
+        "(?:\(horizontalSpace)\(number)\(horizontalSpace)\(units)){0,2}"
+    private static let physicalUnitPattern =
+        "\(number)\(horizontalSpace)[A-Za-zµμ]+(?:\\^?[+−-]?[0-9]+)?" +
+        "\(horizontalSpace)(?:[/·⋅*]\(horizontalSpace)[A-Za-zµμ]+" +
+        "(?:\\^?[+−-]?[0-9]+)?|[ \\t]+[A-Za-zµμ]+(?:\\^[+−-]?[0-9]+|[−-][0-9]+)" +
+        "|\\^[+−-]?[0-9]+|[−-][0-9]+|[23](?![0-9A-Za-z]))"
     private static let clockPattern =
         "(?<![0-9:])([0-9]{1,3}):([0-5][0-9]):([0-5][0-9])(?![0-9:])"
-    private static let decimalRangePattern =
-        "(?<![0-9.])[0-9]+(?:\\.[0-9]+)?\\s*\(units)?\\s*" +
-        "(?:~|–|—|-|\\bto\\b)\\s*[0-9]+(?:\\.[0-9]+)?\\s*\(units)(?![A-Za-z])"
 
     public static func extract(from text: String) -> [Int] {
-        guard let rangeRegex = try? NSRegularExpression(
-                pattern: rangePattern, options: .caseInsensitive
-              ),
-              let itemRegex = try? NSRegularExpression(
-                pattern: itemPattern, options: .caseInsensitive
-              ),
-              let combinedRegex = try? NSRegularExpression(
-                pattern: combinedPattern, options: .caseInsensitive
-              ),
-              let clockRegex = try? NSRegularExpression(pattern: clockPattern),
-              let decimalRangeRegex = try? NSRegularExpression(
-                pattern: decimalRangePattern, options: .caseInsensitive
-              ) else { return [] }
-
+        // 전각 숫자와 ㎜·㎡·⁻¹ 등을 비교 가능한 표기로 바꾸되 원본 문서는 수정하지 않습니다.
+        let text = text.precomposedStringWithCompatibilityMapping
+        guard let itemRegex = regex(itemPattern), let rangeRegex = regex(rangePattern),
+              let physicalRegex = regex(physicalUnitPattern),
+              let clockRegex = regex(clockPattern) else { return [] }
         let fullRange = NSRange(text.startIndex..., in: text)
-        let excluded = decimalRangeRegex.matches(in: text, range: fullRange).filter { match in
-            guard let range = Range(match.range, in: text) else { return false }
-            let value = String(text[range])
-            return value.contains(".") && value.range(of: "[a-zA-Z가-힣]\\s*[~–—-]",
-                                                       options: .regularExpression) != nil
+        let clocks = clockRegex.matches(in: text, range: fullRange)
+        // 범위의 양 끝과 복합 물리 단위를 개별 고정 타이머로 만들지 않습니다.
+        let excluded = (rangeRegex.matches(in: text, range: fullRange)
+            + physicalRegex.matches(in: text, range: fullRange) + clocks).map(\.range)
+        var tokens = itemRegex.matches(in: text, range: fullRange).compactMap { match -> Token? in
+            guard !excluded.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
+                  !isFalsePositive(text, range: match.range),
+                  let value = string(in: text, match: match, group: 1),
+                  let unit = string(in: text, match: match, group: 2),
+                  let total = seconds(value, unit: unit),
+                  let scale = multiplier(for: unit) else { return nil }
+            return Token(range: match.range, seconds: total, scale: scale)
         }
-        let ranges = rangeRegex.matches(in: text, range: fullRange).filter { match in
-            !excluded.contains { NSIntersectionRange($0.range, match.range).length > 0 }
+        tokens += clocks.compactMap { match in
+            guard !isClockTime(text, range: match.range),
+                  let hours = integer(in: text, match: match, group: 1),
+                  let minutes = integer(in: text, match: match, group: 2),
+                  let seconds = integer(in: text, match: match, group: 3) else { return nil }
+            return Token(
+                range: match.range, seconds: hours * 3_600 + minutes * 60 + seconds, scale: 0
+            )
         }
-        let clocks = clockRegex.matches(in: text, range: fullRange).filter { match in
-            !isClockTime(text, range: match.range)
+        return combinedDurations(tokens.sorted { $0.range.location < $1.range.location }, text)
+    }
+
+    private struct Token {
+        let range: NSRange
+        let seconds: Int
+        let scale: Int
+    }
+
+    private static func regex(_ pattern: String) -> NSRegularExpression? {
+        try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+    }
+
+    private static func combinedDurations(_ tokens: [Token], _ text: String) -> [Int] {
+        let source = text as NSString
+        var result: [Int] = []
+        var seen = Set<Int>()
+        var total = 0
+        var previous: Token?
+        var overflow = false
+        func flush() {
+            if !overflow, total > 0, seen.insert(total).inserted { result.append(total) }
+            total = 0
+            overflow = false
         }
-        let protected = (ranges + excluded + clockRegex.matches(in: text, range: fullRange))
-            .map(\.range).sorted { $0.location < $1.location }
-        var gaps: [NSRange] = []
-        var offset = 0
-        for blocked in protected {
-            if blocked.location > offset {
-                gaps.append(NSRange(location: offset, length: blocked.location - offset))
+        for token in tokens {
+            let joins: Bool
+            if let previous, previous.scale > token.scale, token.scale > 0 {
+                let gap = NSRange(
+                    location: NSMaxRange(previous.range),
+                    length: token.range.location - NSMaxRange(previous.range)
+                )
+                joins = source.substring(with: gap).allSatisfy { $0 == " " || $0 == "\t" }
+            } else {
+                joins = false
             }
-            offset = max(offset, NSMaxRange(blocked))
+            if !joins { flush() }
+            let sum = total.addingReportingOverflow(token.seconds)
+            total = sum.partialValue
+            overflow = overflow || sum.overflow
+            previous = token
         }
-        if offset < fullRange.length {
-            gaps.append(NSRange(location: offset, length: fullRange.length - offset))
-        }
-        let singles = gaps.flatMap { combinedRegex.matches(in: text, range: $0) }
-            .filter { !isFalsePositive(text, range: $0.range) }
-        let matches = (ranges.map { ($0, 1) } + singles.map { ($0, 0) } + clocks.map { ($0, 2) })
-            .sorted { $0.0.range.location < $1.0.range.location }
-        return matches.flatMap { match, kind in
-            values(text: text, match: match, kind: kind, itemRegex: itemRegex)
-        }
+        flush()
+        return result
     }
 
     private static func isClockTime(_ text: String, range: NSRange) -> Bool {
         let source = text as NSString
         let prefixStart = max(0, range.location - 24)
-        let prefixRange = NSRange(location: prefixStart, length: range.location - prefixStart)
-        let prefix = source.substring(with: prefixRange)
-        let suffixStart = NSMaxRange(range)
-        let suffixRange = NSRange(
-            location: suffixStart, length: min(16, source.length - suffixStart)
-        )
-        let suffix = source.substring(with: suffixRange)
+        let prefix = source.substring(with: NSRange(
+            location: prefixStart, length: range.location - prefixStart
+        ))
+        let suffix = source.substring(with: NSRange(
+            location: NSMaxRange(range), length: min(20, source.length - NSMaxRange(range))
+        ))
         return prefix.range(of: "(?:오전|오후|[0-9]{4}-[0-9]{2}-[0-9]{2}[ T])\\s*$",
                             options: [.regularExpression, .caseInsensitive]) != nil
-            || suffix.range(of: "^(?:\\.[0-9]+|\\s*(?:AM|PM|기록|시각))",
+            || suffix.range(of: "^(?:\\.[0-9]+|\\s*(?:AM|PM|기록|시각|[/·⋅*^]))",
                             options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func isFalsePositive(_ text: String, range: NSRange) -> Bool {
         let source = text as NSString
-        let start = NSMaxRange(range)
-        if range.location > 0,
-           source.substring(with: NSRange(location: range.location - 1, length: 1)) == "-" {
-            let before = source.substring(to: range.location - 1)
-            let isRange = before.range(
-                of: "(?:시간|분|초|hours?|hrs?|minutes?|mins?|seconds?|secs?|[hms])\\s*$",
-                options: [.regularExpression, .caseInsensitive]
-            ) != nil
-            if !isRange { return true }
-        }
-        let suffixRange = NSRange(location: start, length: min(20, source.length - start))
-        let suffix = source.substring(with: suffixRange)
-        return suffix.range(of: "^\\s*(?:protein|proteasome|ribosomal|rRNA|단백질)",
-                            options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    private static func values(
-        text: String, match: NSTextCheckingResult, kind: Int, itemRegex: NSRegularExpression
-    ) -> [Int] {
-        if kind == 2 {
-            guard let hours = integer(in: text, match: match, group: 1),
-                  let minutes = integer(in: text, match: match, group: 2),
-                  let seconds = integer(in: text, match: match, group: 3) else { return [] }
-            let total = hours * 3_600 + minutes * 60 + seconds
-            return total > 0 ? [total] : []
-        }
-        if kind == 1 {
-            guard let first = string(in: text, match: match, group: 1),
-                  let last = string(in: text, match: match, group: 2),
-                  let unit = string(in: text, match: match, group: 3) else { return [] }
-            return [seconds(first, unit: unit), seconds(last, unit: unit)]
-                .compactMap { $0 }.filter { $0 > 0 }
-        }
-        let parts = itemRegex.matches(in: text, range: match.range)
-        let components: [(Int, Int)] = parts.compactMap { part in
-            guard let value = string(in: text, match: part, group: 1),
-                  let unit = string(in: text, match: part, group: 2),
-                  let total = seconds(value, unit: unit),
-                  let scale = multiplier(for: unit) else { return nil }
-            return (total, scale)
-        }
-        guard components.count == parts.count else { return [] }
-        let ordered = zip(components, components.dropFirst()).allSatisfy { $0.0.1 > $0.1.1 }
-        if ordered {
-            var total = 0
-            for (part, _) in components {
-                let (sum, overflow) = total.addingReportingOverflow(part)
-                guard !overflow else { return [] }
-                total = sum
+        if range.location > 0 {
+            let previous = source.substring(with: NSRange(location: range.location - 1, length: 1))
+            if previous == "-" || previous == "−" || previous == "/" { return true }
+            if previous.range(of: "[A-Za-z]", options: .regularExpression) != nil {
+                let prefix = source.substring(to: range.location)
+                let precedingDuration = "\(number)\(horizontalSpace)\(units)$"
+                if prefix.range(of: precedingDuration,
+                                options: [.regularExpression, .caseInsensitive]) == nil {
+                    return true
+                }
             }
-            return total > 0 ? [total] : []
         }
-        return components.map(\.0).filter { $0 > 0 }
+        let suffix = source.substring(with: NSRange(
+            location: NSMaxRange(range), length: min(32, source.length - NSMaxRange(range))
+        ))
+        if suffix.range(of: "^[ \\t]*(?:[/·⋅*^]|[−-][0-9]|당|의|protein|proteasome|" +
+                        "ribosomal|rRNA|단백질|길이|높이|거리|너비)",
+                        options: [.regularExpression, .caseInsensitive]) != nil { return true }
+        guard let first = suffix.unicodeScalars.first,
+              (0xAC00...0xD7A3).contains(first.value) else { return false }
+        return suffix.range(of: "^(?:간|동안|후|전|이상|이하|이내|정도|가량|까지|씩|을|를|에|은|는|이|가|으로|로)",
+                            options: .regularExpression) == nil
     }
 
     private static func integer(
