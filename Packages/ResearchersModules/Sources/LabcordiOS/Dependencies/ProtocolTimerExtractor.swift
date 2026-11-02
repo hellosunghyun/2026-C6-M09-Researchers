@@ -162,6 +162,9 @@ nonisolated public enum ProtocolTimerExtractor {
         // 단일 대문자 M·H·S는 몰농도·헨리·지멘스 등의 단위와 구분합니다.
         let matched = source.substring(with: range)
         if let last = matched.last, ["M", "H", "S"].contains(last) { return true }
+        if matched.last == "m",
+           let metre = Range(NSRange(location: NSMaxRange(range) - 1, length: 1), in: text),
+           ProtocolDocumentUnitExtractor.isMetre(at: metre, in: text) { return true }
         if range.location > 0 {
             let previous = source.substring(with: NSRange(location: range.location - 1, length: 1))
             if previous == "-" || previous == "−" || previous == "/" { return true }

@@ -121,4 +121,25 @@ final class ProtocolTimerExtractorTests: XCTestCase {
         XCTAssertEqual(ProtocolTimerExtractor.extract(from: "오전 01:02:03 기록"), [])
         XCTAssertEqual(ProtocolTimerExtractor.extract(from: "-5분; 10mL; 3ms"), [])
     }
+
+    func testExplicitLengthMDoesNotBecomeMinutesOrDurationReview() {
+        let values = [
+            "길이 10m", "높이는 5 m", "깊이: 3m", "length of 2m", "depth = 4 m",
+            "5m long", "5m in height", "5m 깊이", "높이 1~5m", "about 5m deep"
+        ]
+        for text in values {
+            XCTAssertEqual(ProtocolTimerExtractor.extract(from: text), [], text)
+            XCTAssertFalse(ProtocolTimerExtractor.needsManualReview(in: text), text)
+        }
+    }
+
+    func testLengthAndFollowingMinuteDurationRemainIndependent() {
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: "길이 10m를 잘라 5 min 동안 배양"), [300])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: "길이 10cm, incubate for 5m"), [300])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: "길이 10m, incubate for 5m"), [300])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: "Incubate for 5 m"), [300])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: "5m30s"), [330])
+        XCTAssertEqual(ProtocolTimerExtractor.extract(from: "5m 동안 배양"), [300])
+        XCTAssertTrue(ProtocolTimerExtractor.needsManualReview(in: "about 5m incubation"))
+    }
 }

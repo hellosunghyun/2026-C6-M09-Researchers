@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import Foundation
+import LabcordiOS
 
 nonisolated enum ProtocolTermCategory: Int, CaseIterable, Equatable, Hashable, Sendable {
     case materials, samples, glossary, units
@@ -19,11 +20,7 @@ nonisolated struct ProtocolReviewTerm: Identifiable, Equatable, Sendable {
     var value: String
 
     static func comparisonKey(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scalars = trimmed.unicodeScalars.map { scalar in
-            (65...90).contains(scalar.value) ? UnicodeScalar(scalar.value + 32)! : scalar
-        }
-        return String(String.UnicodeScalarView(scalars))
+        ProtocolTermNormalizer.key(value)
     }
 }
 

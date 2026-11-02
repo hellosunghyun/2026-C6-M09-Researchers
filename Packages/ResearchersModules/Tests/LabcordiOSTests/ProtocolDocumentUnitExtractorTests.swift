@@ -91,4 +91,127 @@ final class ProtocolDocumentUnitExtractorTests: XCTestCase {
         XCTAssertEqual(result.units, ["mL"])
         XCTAssertFalse(result.usedFallback)
     }
+
+    func testStandaloneMRequiresAnExplicitLengthContext() {
+        let physical = [
+            "길이 10m", "높이는 5 m", "깊이: 3m", "너비 1~5m", "length of 2m",
+            "depth = 4 m", "5m long", "5m in height", "5m 깊이", "높이(m)", "단위 [m]"
+        ]
+        for source in physical {
+            XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), ["m"], source)
+        }
+        let durations = [
+            "Incubate for 5 m", "Wait 5m", "5m 동안 배양", "5m", "5m30s", "5m for incubation"
+        ]
+        for source in durations {
+            XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), [], source)
+        }
+    }
+
+    func testLengthContextDoesNotLeakAcrossAnotherDurationOrClause() {
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "길이 10cm, incubate for 5m"),
+                       ["cm"])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "길이 10m, incubate for 5m"),
+                       ["m"])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "배양 후 길이 10m를 측정"),
+                       ["m"])
+    }
+
+    func testBufferEquationSymbolsDoNotBecomeMeasurements() {
+        // 실제 완충용액 PDF의 OCR 수식·농도 변수·읽기자료 발췌.
+        let source = """
+            (CH3)3NH+/(CH3)3N
+            (CH3)зNH+/(CH3)зN
+            DH~ Dk.- l08 TA]0
+            pH = pK. - 108 TA-lo
+            두 값은 [HA]와 [A] o에 비하여 작다.
+            높이가 3km 정도 되는 산을 이틀 만에 올라간다.
+            0.1M 아세트산 수용액 50mL를 비커에 넣는다.
+            순수한 물 1L의 pH를 측정한다.
+            """
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source),
+                       ["pH", "km", "M", "mL", "L"])
+    }
+
+    func testConductanceMethodIdentifiersAndVariablesAreNotUnitHeaders() {
+        // 실제 METHOD 9050A PDF의 문서 번호·계산 변수·표준 용액 발췌.
+        let source = """
+            METHOD 9050A
+            CD-ROM 9050A - 1 Revision 1
+            K = conductivity
+            (K )(1,000,000)(C)
+            of 0.01 N KCl solution.
+            """
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), ["N"])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "(A) [N] (K)"), [])
+    }
+
+    func testElectricalUnitsKeepSiemensAndActualMhoNotations() {
+        // 같은 전도도 PDF가 단위 설명과 표 머리글에서 수치 없이 사용하는 표기입니다.
+        let source = """
+            where: Km = measured conductivity, uS at t°C
+            When sample conductivity is measured, conductivity at 25°C is:
+            conductivity is reported as millisiemens per meter (mS/m);
+            mS/m = 10 umhos/cm and 1 uS/cm = 1 umho/cm.
+            mS/m = 10 µmhos/cm and 1 µS/cm = 1 µmho/cm.
+            siemens (S)
+            uS/cm Results % %
+            """
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source), [
+            "uS", "°C", "mS/m", "umhos/cm", "uS/cm", "umho/cm", "S", "%"
+        ])
+    }
+
+    func testRealHeadersKeepCommonUnitsWithoutTreatingChemicalBracketsAsHeaders() {
+        let source = """
+            concentration (mM)
+            volume [mL]
+            mg
+            current (A)
+            normality (N)
+            temperature (K)
+            """
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source),
+                       ["mM", "mL", "mg", "A", "N", "K"])
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: "3A; 1e3 A; 0.01 N"),
+                       ["A", "N"])
+    }
+
+    func testComparisonKeysPreserveScaleAndPhysicalUnitCase() {
+        XCTAssertEqual(Set(["mM", "mm", "M", "m"].map(ProtocolTermNormalizer.key)).count, 4)
+        XCTAssertNotEqual(ProtocolTermNormalizer.key("mPa"), ProtocolTermNormalizer.key("MPa"))
+        XCTAssertNotEqual(ProtocolTermNormalizer.key("mA"), ProtocolTermNormalizer.key("MA"))
+        XCTAssertNotEqual(ProtocolTermNormalizer.key("mL"), ProtocolTermNormalizer.key("ML"))
+        XCTAssertEqual(ProtocolTermNormalizer.key(" ＡＳＰＩＲＩＮ "),
+                       ProtocolTermNormalizer.key("aspirin"))
+        XCTAssertEqual(ProtocolTermNormalizer.key("아스피린(Aspirin)"),
+                       ProtocolTermNormalizer.key("아스피린(ASPIRIN)"))
+    }
+
+    func testComparisonKeysNormalizeMicroAndLitreOnlyAtUnitBoundaries() {
+        for variant in ["uS/cm", "µS/cm", "μS / cm"] {
+            XCTAssertEqual(ProtocolTermNormalizer.key(variant), "μS/cm", variant)
+        }
+        for variant in ["ul", "uL", "µl", "μL", "㎕"] {
+            XCTAssertEqual(ProtocolTermNormalizer.key(variant), "μL", variant)
+        }
+        for variant in ["ml", "mL", "ｍＬ", "㎖"] {
+            XCTAssertEqual(ProtocolTermNormalizer.key(variant), "mL", variant)
+        }
+        XCTAssertEqual(ProtocolTermNormalizer.key("ug/ml"), "μg/mL")
+        XCTAssertEqual(ProtocolTermNormalizer.key("mg/ul"), "mg/μL")
+        XCTAssertEqual(ProtocolTermNormalizer.key("umol/ml"), "μmol/mL")
+        XCTAssertEqual(ProtocolTermNormalizer.key("nmol/L"), "nmol/L")
+        XCTAssertEqual(ProtocolTermNormalizer.key("mol"), "mol")
+        XCTAssertEqual(ProtocolTermNormalizer.key("W/m²"), ProtocolTermNormalizer.key("W/m2"))
+    }
+
+    func testUnitAliasesDeduplicateWhileKeepingFirstSourceSpellingAndDifferentScales() {
+        let source = "1 uS/cm; 2 µS/cm; 3 ml; 4 mL; 5 ul; 6 µL; 7 mM; 8 mm; 9 M"
+        XCTAssertEqual(ProtocolDocumentUnitExtractor.extract(from: source),
+                       ["uS/cm", "ml", "ul", "mM", "mm", "M"])
+        let terms = ProtocolExtractedTerms(units: ["µS/cm", "mL", "μL"])
+        let result = ProtocolDocumentUnitExtractor.supplement(terms, from: source)
+        XCTAssertEqual(result.units, ["µS/cm", "mL", "μL", "mM", "mm", "M"])
+    }
 }

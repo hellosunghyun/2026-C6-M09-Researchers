@@ -1,7 +1,7 @@
 import Foundation
 
 /// 용어 비교와 단위 판별에 쓰는 표기 규칙입니다.
-nonisolated enum ProtocolTermNormalizer {
+nonisolated public enum ProtocolTermNormalizer {
     private static let unitPattern = """
         ^(?:[0-9.,]+\\s*)?(?:\
         (?:[pnµμumck]|da)?(?:l|L|g|M|mol|m)|\
@@ -11,13 +11,15 @@ nonisolated enum ProtocolTermNormalizer {
         )$
         """
 
-    static func key(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .widthInsensitive], locale: nil)
+    public static func key(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isUnit(trimmed) { return ProtocolDocumentUnitExtractor.key(trimmed) }
+        return trimmed.folding(options: [.caseInsensitive, .widthInsensitive], locale: nil)
     }
 
     static func isUnit(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCompatibilityMapping
         guard !trimmed.isEmpty, trimmed.count <= 40 else { return false }
         return ProtocolDocumentUnitExtractor.isUnit(trimmed)
             || trimmed.range(of: unitPattern, options: .regularExpression) != nil
