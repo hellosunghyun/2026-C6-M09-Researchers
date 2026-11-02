@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "labcord-package-swift",
-    platforms: [.iOS(.v26), .watchOS(.v26)],
+    platforms: [.iOS(.v27), .watchOS(.v26)],
     products: [
         // Products define the executables and libraries a package produces,
         // making them visible to other packages.
@@ -30,6 +30,10 @@ let package = Package(
         .package(
             url: "https://github.com/devicekit/DeviceKit",
             from: "5.9.0"
+        ),
+        .package(
+            url: "https://github.com/hellosunghyun/swift-omni-parser",
+            revision: "af1293b74a990f1b164df8ffa79851de79e35fbc"
         )
     ],
     targets: [
@@ -53,7 +57,12 @@ let package = Package(
             name: "LabcordiOS",
             dependencies: [
                 "LabcordShared",
-                .product(name: "ComposableArchitecture", package: "swift-composable-architecture")
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+                .product(
+                    name: "OmniParser",
+                    package: "swift-omni-parser",
+                    condition: .when(platforms: [.iOS])
+                )
             ],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
