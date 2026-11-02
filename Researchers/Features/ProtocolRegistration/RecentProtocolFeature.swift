@@ -121,7 +121,7 @@ struct RecentProtocolView: View {
                 }
             }
         }
-        .sheet(item: $detail) { entry in
+        .navigationDestination(item: $detail) { entry in
             RecentProtocolDetailView(entry: entry) {
                 store.send(.select(entry.id))
                 detail = nil
@@ -141,7 +141,6 @@ struct RecentProtocolView: View {
 private struct RecentProtocolDetailView: View {
     let entry: RecentProtocolEntry
     let select: () -> Void
-    @Environment(\.dismiss) private var dismiss
     @State private var expandedGroups: Set<String> = []
 
     private var groups: [(String, [String])] {
@@ -152,8 +151,7 @@ private struct RecentProtocolDetailView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
                     Text(entry.title).typography(Typography.title3)
                     VStack(alignment: .leading, spacing: 8) {
@@ -256,12 +254,6 @@ private struct RecentProtocolDetailView: View {
             }
             .navigationTitle("프로토콜 상세")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { dismiss() }
-                }
-            }
-        }
     }
 }
 
