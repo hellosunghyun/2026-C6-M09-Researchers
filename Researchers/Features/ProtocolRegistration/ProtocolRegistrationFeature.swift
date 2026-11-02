@@ -15,6 +15,9 @@ struct ProtocolRegistrationFeature {
         var isSaving = false
         var pendingID: UUID?
         var hasFailed = false
+        var importing = false
+        var importedPhotos: [ImportedProtocolInput] = []
+        var importedFile: ImportedProtocolInput?
     }
 
     enum Action: Equatable {
@@ -25,6 +28,12 @@ struct ProtocolRegistrationFeature {
         case retryTapped
         case dismissFailure
         case sourceTapped(ProtocolSource)
+        case importStarted
+        case importFinished
+        case photoImported(ImportedProtocolInput)
+        case fileImported(ImportedProtocolInput)
+        case removePhoto(UUID)
+        case removeFile
     }
 
     nonisolated enum SaveFailure: Error, Equatable, Sendable {
@@ -39,10 +48,15 @@ struct ProtocolRegistrationFeature {
         Reduce { state, action in
             switch action {
             case .backTapped:
+                guard !state.importing else { return .none }
+                state.importedPhotos.forEach { $0.remove() }
+                state.importedFile?.remove()
+                state.importedPhotos = []
+                state.importedFile = nil
                 return .none
 
             case .skipTapped:
-                guard !state.isSaving, !state.hasFailed else { return .none }
+                guard !state.isSaving, !state.hasFailed, !state.importing else { return .none }
                 let identifier = state.pendingID ?? uuid()
                 state.pendingID = identifier
                 state.isSaving = true
@@ -62,6 +76,10 @@ struct ProtocolRegistrationFeature {
                 switch result {
                 case let .success(entry):
                     state.pendingID = nil
+                    state.importedPhotos.forEach { $0.remove() }
+                    state.importedFile?.remove()
+                    state.importedPhotos = []
+                    state.importedFile = nil
                     return .send(.saveSucceeded(entry))
                 case .failure:
                     state.hasFailed = true
@@ -77,6 +95,35 @@ struct ProtocolRegistrationFeature {
                 return .none
 
             case .sourceTapped:
+                return .none
+
+            case .importStarted:
+                state.importing = true
+                return .none
+
+            case .importFinished:
+                state.importing = false
+                return .none
+
+            case let .photoImported(input):
+                state.importedPhotos.append(input)
+                return .none
+
+            case let .fileImported(input):
+                state.importedFile?.remove()
+                state.importedFile = input
+                return .none
+
+            case let .removePhoto(id):
+                guard let index = state.importedPhotos.firstIndex(where: { $0.id == id }) else {
+                    return .none
+                }
+                state.importedPhotos.remove(at: index).remove()
+                return .none
+
+            case .removeFile:
+                state.importedFile?.remove()
+                state.importedFile = nil
                 return .none
 
             case .saveSucceeded:

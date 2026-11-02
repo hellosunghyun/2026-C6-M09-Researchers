@@ -1,23 +1,50 @@
 import ComposableArchitecture
 import LabcordDesignSystem
+import PhotosUI
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct ProtocolRegistrationView: View {
     @Bindable var store: StoreOf<ProtocolRegistrationFeature>
+    @State private var photoPickerPresented = false
+    @State private var filePickerPresented = false
+    @State private var photoSelection: [PhotosPickerItem] = []
+    @State private var importFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 8) {
-                    ProtocolUploadButton("사진", description: "PNG, JPG", state: .default) {
-                        store.send(.sourceTapped(.photos))
+                    ProtocolUploadButton(
+                        "사진", description: "PNG, JPG",
+                        state: store.importedPhotos.isEmpty ? .default : .selected
+                    ) {
+                        photoPickerPresented = true
                     }
                     .accessibilityIdentifier("entry-source-photos")
 
-                    ProtocolUploadButton("파일", description: "PDF, XLSX, DOCX", state: .default) {
-                        store.send(.sourceTapped(.file))
+                    ProtocolUploadButton(
+                        "파일", description: "PDF, XLSX, DOCX",
+                        state: store.importedFile == nil ? .default : .selected
+                    ) {
+                        filePickerPresented = true
                     }
                     .accessibilityIdentifier("entry-source-file")
+
+                    if let importedFile = store.importedFile {
+                        HStack {
+                            Text(importedFile.name).lineLimit(1)
+                            Spacer()
+                            Button("삭제", systemImage: "xmark") { store.send(.removeFile) }
+                                .labelStyle(.iconOnly)
+                        }
+                        .padding(.horizontal, 16)
+                    }
+
+                    if store.importing {
+                        ProgressView("파일을 가져오고 있어요")
+                    }
 
                     ProtocolUploadButton(
                         "최근 사용한 프로토콜", description: "", state: .default,
@@ -27,12 +54,27 @@ struct ProtocolRegistrationView: View {
                     }
                     .accessibilityIdentifier("entry-source-recent")
                 }
-                .disabled(store.isSaving)
+                .disabled(store.isSaving || store.importing)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
             }
 
             VStack(spacing: 8) {
+                if !store.importedPhotos.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            ForEach(store.importedPhotos) { photo in
+                                ProtocolPhotoItem {
+                                    store.send(.removePhoto(photo.id))
+                                } content: {
+                                    ProtocolPhotoThumbnail(url: photo.url)
+                                }
+                            }
+                            ProtocolPhotoItem { photoPickerPresented = true }
+                        }
+                    }
+                    .disabled(store.isSaving || store.importing)
+                }
                 Button {
                     store.send(.skipTapped)
                 } label: {
@@ -47,7 +89,7 @@ struct ProtocolRegistrationView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.labcord(.accent, size: .medium))
-                .disabled(store.isSaving)
+                .disabled(store.isSaving || store.importing)
                 .accessibilityIdentifier("entry-skip")
 
                 EntryNextButton()
@@ -64,6 +106,28 @@ struct ProtocolRegistrationView: View {
         } message: {
             Text("실험은 등록되지 않았어요. 다시 시도해 주세요.")
         }
+        .alert("파일을 가져오지 못했어요", isPresented: $importFailed) {
+            Button("확인", role: .cancel) { }
+        } message: {
+            Text("파일을 다시 선택해 주세요.")
+        }
+        .photosPicker(
+            isPresented: $photoPickerPresented,
+            selection: $photoSelection,
+            matching: .images
+        )
+        .onChange(of: photoSelection) { _, selection in
+            importPhotos(selection)
+        }
+        .fileImporter(
+            isPresented: $filePickerPresented,
+            allowedContentTypes: protocolFileTypes
+        ) { result in
+            switch result {
+            case let .success(url): importFile(url)
+            case .failure: importFailed = true
+            }
+        }
         .navigationTitle("실험 등록")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
@@ -72,9 +136,50 @@ struct ProtocolRegistrationView: View {
                 Button("뒤로 가기", systemImage: "chevron.backward") {
                     store.send(.backTapped)
                 }
-                .disabled(store.isSaving)
+                .disabled(store.isSaving || store.importing)
                 .accessibilityIdentifier("entry-back")
             }
+        }
+    }
+
+    private var protocolFileTypes: [UTType] {
+        [.pdf] + ["xlsx", "docx"].compactMap { UTType(filenameExtension: $0) }
+    }
+
+    private func importPhotos(_ selection: [PhotosPickerItem]) {
+        guard !selection.isEmpty else { return }
+        store.send(.importStarted)
+        Task {
+            var failed = false
+            for item in selection {
+                do {
+                    guard let input = try await item.loadTransferable(
+                        type: ImportedProtocolInput.self
+                    ) else {
+                        failed = true
+                        continue
+                    }
+                    store.send(.photoImported(input))
+                } catch {
+                    failed = true
+                }
+            }
+            photoSelection = []
+            store.send(.importFinished)
+            importFailed = failed
+        }
+    }
+
+    private func importFile(_ url: URL) {
+        store.send(.importStarted)
+        Task {
+            do {
+                let input = try await ImportedProtocolInput.copyFile(url)
+                store.send(.fileImported(input))
+            } catch {
+                importFailed = true
+            }
+            store.send(.importFinished)
         }
     }
 }
