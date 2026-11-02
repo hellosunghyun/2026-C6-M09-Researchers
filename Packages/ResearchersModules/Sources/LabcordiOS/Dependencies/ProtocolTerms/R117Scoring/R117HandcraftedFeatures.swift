@@ -2,12 +2,51 @@ import Foundation
 
 /// 고정된 Python pairwise 9열과 HGB v4 32열의 순서를 보존합니다.
 nonisolated enum R117HandcraftedFeatures {
+    struct Document {
+        private let source: [Unicode.Scalar]
+
+        init(text: String) {
+            source = Array(text.unicodeScalars)
+        }
+
+        func nine(span: R117CandidateSpan) throws -> [Double] {
+            try validate(source, span: span)
+            return R117HandcraftedFeatures.nine(source: source, span: span, contextRadius: 180)
+        }
+
+        func combined32(span: R117CandidateSpan) throws -> [Double] {
+            try validate(source, span: span)
+            let base = R117HandcraftedFeatures.nine(
+                source: source, span: span, contextRadius: 160
+            )
+            let before = string(source, max(0, span.start - 32), span.start)
+            let after = string(source, span.end, min(source.count, span.end + 32))
+            // 원본 34열 중 excerpt 경계 flag 두 열(19,20)을 제외합니다.
+            let categories = surfaceFeatures(span.surface) + neighborFeatures(
+                before: before, after: after, term: span.surface
+            )
+            let result = base + categories
+            guard result.count == 32, result.allSatisfy(\.isFinite) else {
+                throw R117ScoringError.invalidFeatures
+            }
+            return result
+        }
+    }
+
     static func nine(text: String, span: R117CandidateSpan) throws -> [Double] {
-        let source = Array(text.unicodeScalars)
-        try validate(source, span: span)
+        try Document(text: text).nine(span: span)
+    }
+
+    static func combined32(text: String, span: R117CandidateSpan) throws -> [Double] {
+        try Document(text: text).combined32(span: span)
+    }
+
+    private static func nine(
+        source: [Unicode.Scalar], span: R117CandidateSpan, contextRadius: Int
+    ) -> [Double] {
         let scalars = Array(span.surface.unicodeScalars)
-        let before = string(source, max(0, span.start - 180), span.start)
-        let after = string(source, span.end, min(source.count, span.end + 180))
+        let before = string(source, max(0, span.start - contextRadius), span.start)
+        let after = string(source, span.end, min(source.count, span.end + contextRadius))
         let context = before + span.surface + after
         let normalizedSurface = normalized(span.surface)
         return [
@@ -17,36 +56,10 @@ nonisolated enum R117HandcraftedFeatures {
             flag(scalars.contains { $0.properties.isUppercase }),
             flag(scalars.contains { "-/+()[]{}=:%".unicodeScalars.contains($0) }),
             flag(scalars.contains { (0xAC00...0xD7A3).contains($0.value) }),
-            flag(matches("(?:method|materials|procedure|protocol|step|실험|방법|시약|재료|장비|분석|측정)",
-                         in: context, insensitive: true)),
-            flag(matches("(?:^|\\n)\\s*(?:\\d+(?:\\.\\d+)*[.)]?|[A-Z][.)]|[가-힣][.)])\\s",
-                         in: before)),
-            flag(matches("(?:^|\\n)\\s*[^\\n]{2,90}\\s*(?:\\n|$)",
-                         in: String(before.unicodeScalars.suffix(100))))
+            flag(matches(Pattern.domain, in: context)),
+            flag(matches(Pattern.step, in: before)),
+            flag(matches(Pattern.heading, in: String(before.unicodeScalars.suffix(100))))
         ]
-    }
-
-    static func combined32(text: String, span: R117CandidateSpan) throws -> [Double] {
-        let source = Array(text.unicodeScalars)
-        try validate(source, span: span)
-        let left = max(0, span.start - 160)
-        let right = min(source.count, span.end + 160)
-        let cropped = string(source, left, right)
-        let relative = R117CandidateSpan(
-            surface: span.surface, start: span.start - left, end: span.end - left
-        )
-        let base = try nine(text: cropped, span: relative)
-        let before = string(source, max(left, span.start - 32), span.start)
-        let after = string(source, span.end, min(right, span.end + 32))
-        // 원본 34열 중 excerpt 경계 flag 두 열(19,20)을 제외합니다.
-        let categories = surfaceFeatures(span.surface) + neighborFeatures(
-            before: before, after: after, term: span.surface
-        )
-        let result = base + categories
-        guard result.count == 32, result.allSatisfy(\.isFinite) else {
-            throw R117ScoringError.invalidFeatures
-        }
-        return result
     }
 
     private static func surfaceFeatures(_ term: String) -> [Double] {
@@ -58,7 +71,7 @@ nonisolated enum R117HandcraftedFeatures {
             flag(scalars.contains { $0.isASCII && $0.properties.isAlphabetic }),
             flag(scalars.contains(where: isDigit)),
             flag(!cased.isEmpty && cased.allSatisfy { $0.properties.isUppercase }),
-            flag(matches("[A-Za-z]\\d|\\d[A-Za-z]", in: term)),
+            flag(matches(Pattern.alphanumeric, in: term)),
             flag(scalars.contains { "-‐‑–−/+·".unicodeScalars.contains($0) }),
             flag(scalars.contains { "()[]{}（）".unicodeScalars.contains($0) }),
             flag(scalars.contains { "µμΩ°℃".unicodeScalars.contains($0) }),
@@ -80,11 +93,8 @@ nonisolated enum R117HandcraftedFeatures {
             flag(last.map(isAlphanumeric) ?? false), flag(first.map(isAlphanumeric) ?? false),
             flag(before.contains("\n")), flag(after.contains("\n")),
             log1p(Double(occurrences(term, in: before) + occurrences(term, in: after))),
-            flag(matches("\\b(?:add|mix|use|using|measure|transfer|prepare|" +
-                         "incubate|centrifuge)\\b" +
-                         "|첨가|혼합|사용|측정|이동|준비|배양|원심", in: context, insensitive: true)),
-            flag(matches("\\d\\s*(?:mL|μL|µL|mg|kg|nm|mm|rpm|°C|℃|%|분|시간|초)\\b",
-                         in: context, insensitive: true))
+            flag(matches(Pattern.action, in: context)),
+            flag(matches(Pattern.quantity, in: context))
         ]
     }
 
@@ -147,9 +157,30 @@ nonisolated enum R117HandcraftedFeatures {
         return count
     }
 
-    private static func matches(
-        _ pattern: String, in text: String, insensitive: Bool = false
-    ) -> Bool {
+    private enum Pattern {
+        static let domain = expression(
+            "(?:method|materials|procedure|protocol|step|실험|방법|시약|재료|장비|분석|측정)",
+            insensitive: true
+        )
+        static let step = expression(
+            "(?:^|\\n)\\s*(?:\\d+(?:\\.\\d+)*[.)]?|[A-Z][.)]|[가-힣][.)])\\s"
+        )
+        static let heading = expression("(?:^|\\n)\\s*[^\\n]{2,90}\\s*(?:\\n|$)")
+        static let alphanumeric = expression("[A-Za-z]\\d|\\d[A-Za-z]")
+        static let action = expression(
+            "\\b(?:add|mix|use|using|measure|transfer|prepare|incubate|centrifuge)\\b" +
+                "|첨가|혼합|사용|측정|이동|준비|배양|원심",
+            insensitive: true
+        )
+        static let quantity = expression(
+            "\\d\\s*(?:mL|μL|µL|mg|kg|nm|mm|rpm|°C|℃|%|분|시간|초)\\b",
+            insensitive: true
+        )
+    }
+
+    private static func expression(
+        _ pattern: String, insensitive: Bool = false
+    ) -> NSRegularExpression? {
         let options: NSRegularExpression.Options = insensitive ? [.caseInsensitive] : []
         // Python \b excludes combining marks and joiners; ICU's default \w includes them.
         let word = "[\\p{L}\\p{N}_]"
@@ -157,9 +188,10 @@ nonisolated enum R117HandcraftedFeatures {
         let whitespace = "[\\p{Z}\\x{0009}-\\x{000D}\\x{001C}-\\x{001F}\\x{0085}]"
         let pythonPattern = pattern.replacingOccurrences(of: "\\b", with: boundary)
             .replacingOccurrences(of: "\\s", with: whitespace)
-        guard let regex = try? NSRegularExpression(pattern: pythonPattern, options: options) else {
-            return false
-        }
-        return regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        return try? NSRegularExpression(pattern: pythonPattern, options: options)
+    }
+
+    private static func matches(_ regex: NSRegularExpression?, in text: String) -> Bool {
+        regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
 }
