@@ -13,6 +13,7 @@ public actor ProtocolAnalysisJobManager {
     private var phase: ProtocolAnalysisJobPhase = .queued
     private var backgroundAvailable = false
     private var execution: Task<Void, Never>?
+    private var draining: (id: UUID, task: Task<Void, Never>)?
     private var runID: UUID?
     private var submissionID: UUID?
     private var listeners: [UUID: AsyncStream<ProtocolAnalysisJobSnapshot>.Continuation] = [:]
@@ -59,6 +60,10 @@ public actor ProtocolAnalysisJobManager {
         guard execution == nil, record?.status != .queued, record?.status != .running else {
             throw CocoaError(.userCancelled)
         }
+        try await drainStoppedExecution()
+        guard execution == nil, record?.status != .queued, record?.status != .running else {
+            throw CocoaError(.userCancelled)
+        }
         record = try store.prepare(id: id, inputs: inputs, now: Date())
         phase = .queued
         publish()
@@ -66,6 +71,11 @@ public actor ProtocolAnalysisJobManager {
     }
 
     public func resume(id: UUID) async throws {
+        guard execution == nil, record?.id == id,
+              record?.status == .paused || record?.status == .failed else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        try await drainStoppedExecution()
         guard execution == nil, record?.id == id,
               record?.status == .paused || record?.status == .failed else {
             throw CocoaError(.fileReadNoSuchFile)
@@ -80,15 +90,12 @@ public actor ProtocolAnalysisJobManager {
 
     public func cancel(id: UUID) async {
         guard record?.id == id else { return }
-        execution?.cancel()
-        execution = nil
-        runID = nil
-        submissionID = nil
+        let finish = stopExecution(id: id)
         record?.status = .cancelled
         record?.message = nil
         try? persist()
         publish()
-        await ProtocolAnalysisBackgroundScheduler.shared.finish(id: id, success: false)
+        await finish.value
     }
 
     public func enteredBackground() async {
@@ -288,14 +295,41 @@ private extension ProtocolAnalysisJobManager {
     private func pause(id: UUID, message: String) async {
         guard record?.id == id, record?.status != .cancelled,
               record?.status != .completed else { return }
-        execution?.cancel()
-        execution = nil
-        runID = nil
+        let finish = stopExecution(id: id)
         record?.status = .paused
         record?.message = message
         try? persist()
         publish()
-        await ProtocolAnalysisBackgroundScheduler.shared.finish(id: id, success: false)
+        await finish.value
+    }
+
+    private func stopExecution(id: UUID) -> Task<Void, Never> {
+        let previous = execution
+        let previousDrain = draining?.task
+        previous?.cancel()
+        execution = nil
+        runID = nil
+        submissionID = nil
+        let finish = Task {
+            await ProtocolAnalysisBackgroundScheduler.shared.finish(id: id, success: false)
+        }
+        let drain = Task {
+            await finish.value
+            if let previous { await previous.value }
+            if let previousDrain { await previousDrain.value }
+        }
+        draining = (UUID(), drain)
+        // execute의 실패 경로에서도 호출하므로 자기 실행의 종료는 여기서 기다리지 않습니다.
+        return finish
+    }
+
+    private func drainStoppedExecution() async throws {
+        try Task.checkCancellation()
+        while let pending = draining {
+            await pending.task.value
+            try Task.checkCancellation()
+            if draining?.id == pending.id { draining = nil }
+        }
     }
 
     private func snapshot() throws -> ProtocolAnalysisJobSnapshot? {

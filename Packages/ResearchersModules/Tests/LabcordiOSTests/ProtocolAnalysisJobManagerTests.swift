@@ -11,6 +11,8 @@ private actor JobProbe {
     private(set) var parseCount = 0
     private(set) var selectCount = 0
     private(set) var seeds: [ProtocolExtractedTerms?] = []
+    private var activeClassifications = 0
+    private var maximumClassifications = 0
     private var gate: CheckedContinuation<Void, Never>?
     private let continuation: AsyncStream<Void>.Continuation
     nonisolated let entered: AsyncStream<Void>
@@ -27,6 +29,9 @@ private actor JobProbe {
     func classify(
         seed: ProtocolExtractedTerms?, checkpoint: ProtocolTermClient.Checkpoint
     ) async throws -> ProtocolExtractedTerms {
+        activeClassifications += 1
+        maximumClassifications = max(maximumClassifications, activeClassifications)
+        defer { activeClassifications -= 1 }
         seeds.append(seed)
         if behavior == .failFirst && seeds.count == 1 {
             try await checkpoint(.init(materials: ["Aspirin"]))
@@ -42,13 +47,17 @@ private actor JobProbe {
     }
     func release() { gate?.resume(); gate = nil }
     func counts() -> Counts {
-        Counts(parse: parseCount, select: selectCount, seeds: seeds)
+        Counts(
+            parse: parseCount, select: selectCount, seeds: seeds,
+            maximumClassifications: maximumClassifications
+        )
     }
 
     struct Counts {
         let parse: Int
         let select: Int
         let seeds: [ProtocolExtractedTerms?]
+        let maximumClassifications: Int
     }
 }
 
@@ -236,12 +245,82 @@ final class ProtocolAnalysisJobManagerTests: XCTestCase {
         let restored = try await manager.restore()
         XCTAssertEqual(restored?.status, .paused)
         let stream = await manager.updates()
-        try await manager.resume(id: id)
+        let resumed = Task { try await manager.resume(id: id) }
+        do {
+            _ = try await waitFor(.completed, in: stream, timeout: .milliseconds(150))
+            XCTFail("A resumed job must wait for the cancelled classifier to finish")
+        } catch JobTestError.timeout { }
+        let beforeRelease = await probe.counts()
+        XCTAssertEqual(beforeRelease.seeds.count, 1)
         await probe.release()
-        _ = try await waitFor(.completed, in: stream)
+        try await resumed.value
+        _ = try await waitFor(.completed, in: await manager.updates())
         let counts = await probe.counts()
         XCTAssertEqual(counts.parse, 1)
         XCTAssertEqual(counts.select, 1)
+        XCTAssertEqual(counts.maximumClassifications, 1)
+    }
+}
+
+extension ProtocolAnalysisJobManagerTests {
+    func testCancelDrainsBeforeStartingAnotherJob() async throws {
+        let fixture = try setup(.blockFirst)
+        let directory = fixture.directory
+        let input = fixture.input
+        let manager = fixture.manager
+        let probe = fixture.probe
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstID = UUID()
+        try await manager.start(id: firstID, inputs: [input])
+        try await waitForGate(probe.entered)
+        await manager.cancel(id: firstID)
+        let stream = await manager.updates()
+        let nextID = UUID()
+        let started = Task { try await manager.start(id: nextID, inputs: [input]) }
+        do {
+            _ = try await waitFor(.completed, in: stream, timeout: .milliseconds(150))
+            XCTFail("A new job must wait for the cancelled classifier to finish")
+        } catch JobTestError.timeout { }
+        let beforeRelease = await probe.counts()
+        XCTAssertEqual(beforeRelease.parse, 1)
+        XCTAssertEqual(beforeRelease.seeds.count, 1)
+        await probe.release()
+        try await started.value
+        let result = try await waitFor(.completed, in: await manager.updates())
+        XCTAssertEqual(result.id, nextID)
+        let counts = await probe.counts()
+        XCTAssertEqual(counts.parse, 2)
+        XCTAssertEqual(counts.maximumClassifications, 1)
+    }
+
+    func testCancelWhileResumeDrainsDoesNotRestart() async throws {
+        let fixture = try setup(.blockFirst)
+        let directory = fixture.directory
+        let input = fixture.input
+        let manager = fixture.manager
+        let probe = fixture.probe
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let id = UUID()
+        try await manager.start(id: id, inputs: [input])
+        try await waitForGate(probe.entered)
+        await manager.enteredBackground()
+        let stream = await manager.updates()
+        let resumed = Task { try await manager.resume(id: id) }
+        do {
+            _ = try await waitFor(.completed, in: stream, timeout: .milliseconds(150))
+            XCTFail("The suspended classifier has not finished yet")
+        } catch JobTestError.timeout { }
+        await manager.cancel(id: id)
+        await probe.release()
+        do {
+            try await resumed.value
+            XCTFail("A cancelled job must not restart after draining")
+        } catch { }
+        let restored = try await manager.restore()
+        XCTAssertEqual(restored?.status, .cancelled)
+        let counts = await probe.counts()
+        XCTAssertEqual(counts.seeds.count, 1)
+        XCTAssertEqual(counts.maximumClassifications, 1)
     }
 
     func testDuplicateStartIsRejectedWhileRunning() async throws {
