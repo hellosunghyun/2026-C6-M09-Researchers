@@ -24,14 +24,16 @@ nonisolated final class R117Ranker {
         observation: ((String, Double) -> Void)? = nil,
         includeTrace: Bool = false,
         precomputedLast2: [[Float]]? = nil,
+        precomputedDocuments: Documents? = nil,
         candidateProgress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> Result {
         try Task.checkCancellation()
         guard !spans.isEmpty else { throw R117RuntimeError.invalidCandidate }
         let ranges = spans.map { $0.start..<$0.end }
-        let original = try measure("original_document_encoder", observation) {
-            try encoder.document(text: text, function: "r117_original")
-        }
+        let original = try document(
+            text: text, function: "r117_original", precomputed: precomputedDocuments?.original,
+            observation: observation
+        )
         let originalFeatures = try measure("original_relative_features", observation) {
             try original.relativeFeatures(text: text, spans: ranges)
         }
@@ -42,7 +44,10 @@ nonisolated final class R117Ranker {
         }
         let components = try teacherComponents(
             text: text, spans: spans, ranges: ranges, observation: observation,
-            last2Input: Last2Input(features: precomputedLast2, progress: candidateProgress)
+            input: TeacherInput(
+                document: precomputedDocuments?.teacher, last2Features: precomputedLast2,
+                progress: candidateProgress
+            )
         )
         let combined = try measure("score_combination", observation) {
             try R117ScoringMath.combine(components, headLogits: head)
@@ -54,7 +59,8 @@ nonisolated final class R117Ranker {
         )
     }
 
-    /// 추론만 최대 두 개씩 실행하고, 가변 모델 캐시와 나머지 계산은 호출 actor에 남깁니다.
+    /// 문서 두 모델의 인코딩을 함께 마친 뒤 후보별 추론을 시작합니다.
+    /// 가변 모델 캐시 접근과 나머지 점수 계산은 호출 actor에 남깁니다.
     func scoresConcurrently(
         text: String,
         spans: [R117CandidateSpan],
@@ -65,6 +71,17 @@ nonisolated final class R117Ranker {
     ) async throws -> Result {
         try Task.checkCancellation()
         guard !spans.isEmpty else { throw R117RuntimeError.invalidCandidate }
+        let documentStarted = observation == nil ? nil : DispatchTime.now().uptimeNanoseconds
+        let prepared = try encoder.prepareDocuments(text: text)
+        async let original = prepared.original.document()
+        async let teacher = prepared.teacher.document()
+        let (originalDocument, teacherDocument) = try await (original, teacher)
+        try Task.checkCancellation()
+        if let documentStarted {
+            observation?("document_encoders_concurrent",
+                         Double(DispatchTime.now().uptimeNanoseconds - documentStarted)
+                            / 1_000_000_000)
+        }
         let started = observation == nil ? nil : DispatchTime.now().uptimeNanoseconds
         let features = try await encoder.last2Concurrently(
             text: text, spans: spans.map { $0.start..<$0.end }, progress: candidateProgress
@@ -76,8 +93,14 @@ nonisolated final class R117Ranker {
         try Task.checkCancellation()
         return try scores(
             text: text, spans: spans, observation: observation,
-            includeTrace: includeTrace, precomputedLast2: features
+            includeTrace: includeTrace, precomputedLast2: features,
+            precomputedDocuments: Documents(original: originalDocument, teacher: teacherDocument)
         )
+    }
+
+    struct Documents: Sendable {
+        let original: R117Encoder.Document
+        let teacher: R117Encoder.Document
     }
 
     struct Result {
@@ -96,11 +119,12 @@ nonisolated final class R117Ranker {
         spans: [R117CandidateSpan],
         ranges: [Range<Int>],
         observation: ((String, Double) -> Void)?,
-        last2Input: Last2Input
+        input: TeacherInput
     ) throws -> R117ScoringMath.Components {
-        let teacher = try measure("teacher_document_encoder", observation) {
-            try encoder.document(text: text, function: "teacher_taskfit")
-        }
+        let teacher = try document(
+            text: text, function: "teacher_taskfit", precomputed: input.document,
+            observation: observation
+        )
         let relative = try measure("teacher_relative_features", observation) {
             try teacher.relativeFeatures(text: text, spans: ranges)
         }
@@ -133,7 +157,7 @@ nonisolated final class R117Ranker {
             try runner.predictHead(function: "teacher_purpose", features: purposeRelative)
         }
         let last2Features = try last2Features(
-            text: text, ranges: ranges, observation: observation, input: last2Input
+            text: text, ranges: ranges, observation: observation, input: input
         )
         let last2 = try measure("teacher_last2_head", observation) {
             try runner.predictHead(
@@ -147,18 +171,31 @@ nonisolated final class R117Ranker {
         )
     }
 
-    private struct Last2Input {
-        let features: [[Float]]?
+    private struct TeacherInput {
+        let document: R117Encoder.Document?
+        let last2Features: [[Float]]?
         let progress: (@Sendable (Int, Int) -> Void)?
     }
 
     private func last2Features(
         text: String, ranges: [Range<Int>], observation: ((String, Double) -> Void)?,
-        input: Last2Input
+        input: TeacherInput
     ) throws -> [[Float]] {
-        if let features = input.features { return features }
+        if let features = input.last2Features { return features }
         return try measure("teacher_last2_features", observation) {
             try encoder.last2(text: text, spans: ranges, progress: input.progress)
+        }
+    }
+
+    private func document(
+        text: String, function: String, precomputed: R117Encoder.Document?,
+        observation: ((String, Double) -> Void)?
+    ) throws -> R117Encoder.Document {
+        if let precomputed { return precomputed }
+        let stage = function == "r117_original"
+            ? "original_document_encoder" : "teacher_document_encoder"
+        return try measure(stage, observation) {
+            try encoder.document(text: text, function: function)
         }
     }
 

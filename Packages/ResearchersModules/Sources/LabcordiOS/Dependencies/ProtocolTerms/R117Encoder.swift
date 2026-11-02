@@ -2,12 +2,22 @@ import CoreML
 import Foundation
 
 nonisolated final class R117Encoder {
-    struct Document {
+    struct Document: Sendable {
         let offsets: [Range<Int>]
         let vectors: [[Double]]
+        private let hasOrderedOffsets: Bool
+
+        init(offsets: [Range<Int>], vectors: [[Double]]) {
+            self.offsets = offsets
+            self.vectors = vectors
+            hasOrderedOffsets = zip(offsets, offsets.dropFirst()).allSatisfy { previous, next in
+                previous.lowerBound <= next.lowerBound && previous.upperBound <= next.upperBound
+            }
+        }
 
         func pooled(in range: Range<Int>) throws -> [Float] {
-            let overlaps = offsets.enumerated().compactMap { index, offset -> (Int, Int)? in
+            let overlaps = overlappingIndices(in: range).compactMap { index -> (Int, Int)? in
+                let offset = offsets[index]
                 let weight = max(0, min(offset.upperBound, range.upperBound)
                     - max(offset.lowerBound, range.lowerBound))
                 return weight > 0 ? (index, weight) : nil
@@ -20,6 +30,28 @@ nonisolated final class R117Encoder {
                 for column in 0..<384 { output[column] += vectors[index][column] * scale }
             }
             return output.map(Float.init)
+        }
+
+        private func overlappingIndices(in range: Range<Int>) -> Range<Int> {
+            guard hasOrderedOffsets else { return offsets.indices }
+            guard !range.isEmpty else { return 0..<0 }
+            let lower = firstOffset { $0.upperBound > range.lowerBound }
+            let upper = firstOffset { $0.lowerBound >= range.upperBound }
+            return lower..<upper
+        }
+
+        private func firstOffset(where predicate: (Range<Int>) -> Bool) -> Int {
+            var lower = 0
+            var upper = offsets.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if predicate(offsets[middle]) {
+                    upper = middle
+                } else {
+                    lower = middle + 1
+                }
+            }
+            return lower
         }
 
         func validateCoverage(text: String, range: Range<Int>) throws {
@@ -101,6 +133,40 @@ nonisolated final class R117Encoder {
         return Document(offsets: encoding.offsets, vectors: vectors)
     }
 
+    func prepareDocuments(text: String) throws -> (
+        original: R117DocumentEncoder.Prepared, teacher: R117DocumentEncoder.Prepared
+    ) {
+        try Task.checkCancellation()
+        let encoding = try tokenizer.encode(text)
+        guard !encoding.ids.isEmpty else { throw R117RuntimeError.uncoveredSource }
+        try Task.checkCancellation()
+        let original = try runner.model(function: "r117_original")
+        try Task.checkCancellation()
+        let teacher = try runner.model(function: "teacher_taskfit")
+        try Task.checkCancellation()
+        return (
+            R117DocumentEncoder.Prepared(encoding: encoding, model: original),
+            R117DocumentEncoder.Prepared(encoding: encoding, model: teacher)
+        )
+    }
+
+    func prepareDocument(text: String, function: String) throws -> R117DocumentEncoder.Prepared {
+        try Task.checkCancellation()
+        let encoding = try tokenizer.encode(text)
+        guard !encoding.ids.isEmpty else { throw R117RuntimeError.uncoveredSource }
+        try Task.checkCancellation()
+        let model = try runner.model(function: function)
+        return R117DocumentEncoder.Prepared(encoding: encoding, model: model)
+    }
+
+    func documentConcurrently(
+        text: String, function: String,
+        isolation: isolated (any Actor)? = #isolation
+    ) async throws -> Document {
+        let prepared = try prepareDocument(text: text, function: function)
+        return try await prepared.document()
+    }
+
     func last2(
         text: String, spans: [Range<Int>],
         progress: (@Sendable (Int, Int) -> Void)? = nil
@@ -137,9 +203,9 @@ nonisolated final class R117Encoder {
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> [[Float]] {
         let plan = try R117Last2Plan(text: text, spans: spans, tokenizer: tokenizer)
-        let model = try runner.model(function: "teacher_last2")
+        let models = try runner.last2ModelPool(maximumModels: (plan.groups.count + 1) / 2)
         return try await R117ConcurrentEncoder.last2(
-            plan: plan, model: model, candidateCount: spans.count, progress: progress
+            plan: plan, models: models, candidateCount: spans.count, progress: progress
         )
     }
 

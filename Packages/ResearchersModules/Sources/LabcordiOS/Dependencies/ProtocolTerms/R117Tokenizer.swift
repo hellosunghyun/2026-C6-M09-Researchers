@@ -2,7 +2,7 @@ import Foundation
 
 /// JSON에 고정된 Unigram 어휘와 정규화 표를 사용합니다. 좌표는 Unicode scalar입니다.
 nonisolated final class R117Tokenizer {
-    struct Encoding {
+    struct Encoding: Sendable {
         var ids: [Int]
         var offsets: [Range<Int>]
     }
