@@ -18,6 +18,31 @@ struct ProtocolRegistrationFeature {
         var importing = false
         var importedPhotos: [ImportedProtocolInput] = []
         var importedFile: ImportedProtocolInput?
+        var analysisID: UUID?
+        var analysisCancellationRequested = false
+        var analysisResults: [UUID: ProtocolAnalysisItem] = [:]
+        var analysisFailed = false
+
+        var selectedInputs: [ImportedProtocolInput] {
+            importedPhotos + (importedFile.map { [$0] } ?? [])
+        }
+
+        var pendingInputs: [ImportedProtocolInput] {
+            selectedInputs.filter { input in
+                guard let item = analysisResults[input.id] else { return true }
+                if case .failure = item.outcome { return true }
+                return false
+            }
+        }
+
+        var successfulResults: [ProtocolAnalysisItem] {
+            selectedInputs.compactMap { input in
+                guard let item = analysisResults[input.id], case .success = item.outcome else {
+                    return nil
+                }
+                return item
+            }
+        }
     }
 
     enum Action: Equatable {
@@ -34,6 +59,11 @@ struct ProtocolRegistrationFeature {
         case fileImported(ImportedProtocolInput)
         case removePhoto(UUID)
         case removeFile
+        case startAnalysis(UUID)
+        case cancelAnalysis
+        case analysisFinished(UUID, [ProtocolAnalysisItem]?)
+        case showReview
+        case clearImportedInputs
     }
 
     nonisolated enum SaveFailure: Error, Equatable, Sendable {
@@ -48,7 +78,14 @@ struct ProtocolRegistrationFeature {
         Reduce { state, action in
             switch action {
             case .backTapped:
-                guard !state.importing else { return .none }
+                guard !state.importing, state.analysisID == nil else { return .none }
+                state.importedPhotos.forEach { $0.remove() }
+                state.importedFile?.remove()
+                state.importedPhotos = []
+                state.importedFile = nil
+                return .none
+
+            case .clearImportedInputs:
                 state.importedPhotos.forEach { $0.remove() }
                 state.importedFile?.remove()
                 state.importedPhotos = []
@@ -56,7 +93,8 @@ struct ProtocolRegistrationFeature {
                 return .none
 
             case .skipTapped:
-                guard !state.isSaving, !state.hasFailed, !state.importing else { return .none }
+                guard !state.isSaving, !state.hasFailed, !state.importing,
+                      state.analysisID == nil else { return .none }
                 let identifier = state.pendingID ?? uuid()
                 state.pendingID = identifier
                 state.isSaving = true
@@ -110,6 +148,7 @@ struct ProtocolRegistrationFeature {
                 return .none
 
             case let .fileImported(input):
+                if let id = state.importedFile?.id { state.analysisResults[id] = nil }
                 state.importedFile?.remove()
                 state.importedFile = input
                 return .none
@@ -119,14 +158,49 @@ struct ProtocolRegistrationFeature {
                     return .none
                 }
                 state.importedPhotos.remove(at: index).remove()
+                state.analysisResults[id] = nil
                 return .none
 
             case .removeFile:
+                if let id = state.importedFile?.id { state.analysisResults[id] = nil }
                 state.importedFile?.remove()
                 state.importedFile = nil
                 return .none
 
+            case let .startAnalysis(id):
+                guard state.analysisID == nil, !state.pendingInputs.isEmpty else { return .none }
+                state.analysisID = id
+                state.analysisCancellationRequested = false
+                state.analysisFailed = false
+                return .none
+
+            case .cancelAnalysis:
+                guard state.analysisID != nil else { return .none }
+                state.analysisCancellationRequested = true
+                return .none
+
+            case let .analysisFinished(id, items):
+                guard state.analysisID == id else { return .none }
+                state.analysisID = nil
+                if state.analysisCancellationRequested {
+                    state.analysisCancellationRequested = false
+                    return .none
+                }
+                guard let items else {
+                    state.analysisFailed = true
+                    return .none
+                }
+                for item in items { state.analysisResults[item.id] = item }
+                state.analysisFailed = items.contains {
+                    if case .failure = $0.outcome { return true }
+                    return false
+                }
+                return .none
+
             case .saveSucceeded:
+                return .none
+
+            case .showReview:
                 return .none
             }
         }

@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import LabcordDesignSystem
+import LabcordiOS
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -11,6 +12,9 @@ struct ProtocolRegistrationView: View {
     @State private var filePickerPresented = false
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var importFailed = false
+    @State private var analysisTask: Task<Void, Never>?
+    @State private var showReviewConfirmation = false
+    @Dependency(\.protocolAnalysisClient) private var analysisClient
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,7 +58,7 @@ struct ProtocolRegistrationView: View {
                     }
                     .accessibilityIdentifier("entry-source-recent")
                 }
-                .disabled(store.isSaving || store.importing)
+                .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
             }
@@ -73,7 +77,22 @@ struct ProtocolRegistrationView: View {
                             ProtocolPhotoItem { photoPickerPresented = true }
                         }
                     }
-                    .disabled(store.isSaving || store.importing)
+                    .disabled(store.isSaving || store.importing || store.analysisID != nil)
+                }
+                if store.analysisID != nil {
+                    ProgressView("프로토콜을 분석하고 있어요")
+                    Button("분석 취소") {
+                        store.send(.cancelAnalysis)
+                        analysisTask?.cancel()
+                    }
+                    .disabled(store.analysisCancellationRequested)
+                } else if store.analysisFailed {
+                    Text("일부 파일을 분석하지 못했어요. 다시 시도해 주세요.")
+                        .font(.footnote)
+                }
+                if !store.successfulResults.isEmpty, store.analysisID == nil {
+                    Button("분석 결과 보기") { showReviewConfirmation = true }
+                        .buttonStyle(.labcord(.accent, size: .medium))
                 }
                 Button {
                     store.send(.skipTapped)
@@ -89,10 +108,15 @@ struct ProtocolRegistrationView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.labcord(.accent, size: .medium))
-                .disabled(store.isSaving || store.importing)
+                .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 .accessibilityIdentifier("entry-skip")
 
-                EntryNextButton()
+                EntryNextButton(
+                    enabled: !store.pendingInputs.isEmpty && !store.importing
+                        && !store.isSaving && store.analysisID == nil,
+                    retry: store.analysisFailed,
+                    action: analyze
+                )
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
@@ -110,6 +134,12 @@ struct ProtocolRegistrationView: View {
             Button("확인", role: .cancel) { }
         } message: {
             Text("파일을 다시 선택해 주세요.")
+        }
+        .alert("타이머와 용어를 확인해 주세요", isPresented: $showReviewConfirmation) {
+            Button("확인") { store.send(.showReview) }
+            Button("취소", role: .cancel) { }
+        } message: {
+            Text(reviewConfirmationMessage)
         }
         .photosPicker(
             isPresented: $photoPickerPresented,
@@ -136,7 +166,7 @@ struct ProtocolRegistrationView: View {
                 Button("뒤로 가기", systemImage: "chevron.backward") {
                     store.send(.backTapped)
                 }
-                .disabled(store.isSaving || store.importing)
+                .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 .accessibilityIdentifier("entry-back")
             }
         }
@@ -144,6 +174,35 @@ struct ProtocolRegistrationView: View {
 
     private var protocolFileTypes: [UTType] {
         [.pdf] + ["xlsx", "docx"].compactMap { UTType(filenameExtension: $0) }
+    }
+
+    private var reviewConfirmationMessage: String {
+        var messages: [String] = []
+        if !store.pendingInputs.isEmpty {
+            messages.append("분석하지 못한 파일은 제외돼요.")
+        }
+        if store.successfulResults.contains(where: \.hasWarnings) {
+            messages.append("일부 내용을 읽지 못했을 수 있어요.")
+        }
+        messages.append("타이머를 확인하고 용어를 직접 입력해 주세요.")
+        return messages.joined(separator: " ")
+    }
+
+    private func analyze() {
+        let inputs = store.pendingInputs.map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
+        guard !inputs.isEmpty else { return }
+        let id = UUID()
+        store.send(.startAnalysis(id))
+        analysisTask = Task {
+            let results: [ProtocolAnalysisItem]?
+            do {
+                results = try await analysisClient.parse(inputs, nil)
+            } catch {
+                results = nil
+            }
+            store.send(.analysisFinished(id, results))
+            analysisTask = nil
+        }
     }
 
     private func importPhotos(_ selection: [PhotosPickerItem]) {
@@ -207,14 +266,18 @@ private struct EntryLoadingIndicator: View {
 }
 
 private struct EntryNextButton: View {
+    let enabled: Bool
+    let retry: Bool
+    let action: () -> Void
+
     var body: some View {
-        Button {} label: {
-            Text("다음")
+        Button(action: action) {
+            Text(retry ? "다시 시도" : "다음")
                 .font(.body)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.labcord(.primary, size: .large))
-        .disabled(true)
+        .disabled(!enabled)
         .accessibilityIdentifier("entry-next")
     }
 }

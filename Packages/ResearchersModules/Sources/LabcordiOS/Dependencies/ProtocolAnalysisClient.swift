@@ -20,6 +20,16 @@ nonisolated public enum ProtocolAnalysisOutcome: Equatable, Sendable {
 nonisolated public struct ProtocolAnalysisItem: Equatable, Sendable {
     public let id: UUID
     public let outcome: ProtocolAnalysisOutcome
+
+    public var extractedText: String? {
+        guard case let .success(document) = outcome else { return nil }
+        return document.fullText
+    }
+
+    public var hasWarnings: Bool {
+        guard case let .success(document) = outcome else { return false }
+        return !document.warnings.isEmpty
+    }
 }
 
 public struct ProtocolAnalysisClient: Sendable {
