@@ -48,6 +48,19 @@ nonisolated public enum ProtocolTermClassifier {
         try await classify(terms, context: context, seed: nil, progress: progress) { _ in }
     }
 
+    static func classifyDocument(
+        _ terms: [String], context: String, seed: ProtocolExtractedTerms? = nil,
+        progress: ProtocolTermClient.Progress? = nil,
+        checkpoint: ProtocolTermClient.Checkpoint = { _ in }
+    ) async throws -> ProtocolExtractedTerms {
+        let classified = try await classify(
+            terms, context: context, seed: seed, progress: progress, checkpoint: checkpoint
+        )
+        try Task.checkCancellation()
+        // 완료 배치에는 원래 후보만 저장해 중단 후 prefix 검증·재개를 유지합니다.
+        return ProtocolDocumentUnitExtractor.supplement(classified, from: context)
+    }
+
     public static func classify(
         _ terms: [String], context: String, seed: ProtocolExtractedTerms?,
         progress: ProtocolTermClient.Progress? = nil,

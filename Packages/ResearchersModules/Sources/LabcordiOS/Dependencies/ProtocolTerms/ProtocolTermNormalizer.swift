@@ -18,7 +18,8 @@ nonisolated enum ProtocolTermNormalizer {
 
     static func isUnit(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 12 else { return false }
-        return trimmed.range(of: unitPattern, options: .regularExpression) != nil
+        guard !trimmed.isEmpty, trimmed.count <= 40 else { return false }
+        return ProtocolDocumentUnitExtractor.isUnit(trimmed)
+            || trimmed.range(of: unitPattern, options: .regularExpression) != nil
     }
 }

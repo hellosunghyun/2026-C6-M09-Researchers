@@ -56,7 +56,7 @@ extension ProtocolTermClient: DependencyKey {
         var client = ProtocolTermClient { text, progress in
             let terms = try await R117TermExtractor.shared.extract(from: text, progress: progress)
             try Task.checkCancellation()
-            return try await ProtocolTermClassifier.classify(
+            return try await ProtocolTermClassifier.classifyDocument(
                 terms, context: text, progress: progress
             )
         }
@@ -67,7 +67,7 @@ extension ProtocolTermClient: DependencyKey {
             return try ProtocolDocumentTermCleaner.clean(terms, document: document)
         }
         client.classifyDocumentTerms = { terms, text, seed, progress, checkpoint in
-            try await ProtocolTermClassifier.classify(
+            try await ProtocolTermClassifier.classifyDocument(
                 terms, context: text, seed: seed, progress: progress, checkpoint: checkpoint
             )
         }
