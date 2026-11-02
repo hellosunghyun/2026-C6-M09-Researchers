@@ -1,7 +1,7 @@
 import CoreML
 import Foundation
 
-/// 같은 토큰 입력은 한 번만 추론하고, 동시에 실행하는 async prediction을 둘로 제한합니다.
+/// 같은 입력은 한 번만 추론하며, 최대 네 모델에 모델당 async prediction 두 개를 배정합니다.
 nonisolated enum R117ConcurrentEncoder {
     struct Features: Sendable {
         let candidate: Int
@@ -9,14 +9,31 @@ nonisolated enum R117ConcurrentEncoder {
     }
 
     typealias Prediction = @Sendable (R117Last2Plan.Group) async throws -> [Features]
+    typealias WorkerPrediction = @Sendable (R117Last2Plan.Group, Int) async throws -> [Features]
 
     static func last2(
         plan: R117Last2Plan, model: MLModel, candidateCount: Int,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> [[Float]] {
-        let predictor = AsyncModel(model: model)
-        return try await last2(plan: plan, candidateCount: candidateCount, progress: progress) {
-            try await predictor.predict($0)
+        try await last2(plan: plan, models: [model], candidateCount: candidateCount,
+                        progress: progress)
+    }
+
+    static func last2(
+        plan: R117Last2Plan, models: [MLModel], candidateCount: Int,
+        progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) async throws -> [[Float]] {
+        try Task.checkCancellation()
+        guard (1...4).contains(models.count),
+              Set(models.map { ObjectIdentifier($0) }).count == models.count else {
+            throw R117RuntimeError.invalidCandidate
+        }
+        let predictors = models.map { AsyncModel(model: $0) }
+        return try await last2(
+            plan: plan, workerCount: predictors.count,
+            candidateCount: candidateCount, progress: progress
+        ) { group, worker in
+            try await predictors[worker].predict(group)
         }
     }
 
@@ -25,15 +42,42 @@ nonisolated enum R117ConcurrentEncoder {
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         prediction: @escaping Prediction
     ) async throws -> [[Float]] {
+        try await last2(plan: plan, workerCount: 1, candidateCount: candidateCount,
+                        progress: progress) { group, _ in try await prediction(group) }
+    }
+
+    static func last2(
+        plan: R117Last2Plan, workerCount: Int, candidateCount: Int,
+        progress: (@Sendable (Int, Int) -> Void)? = nil,
+        prediction: @escaping WorkerPrediction
+    ) async throws -> [[Float]] {
         try Task.checkCancellation()
+        guard (1...4).contains(workerCount) else { throw R117RuntimeError.invalidCandidate }
         try validate(plan, candidateCount: candidateCount)
+        return try await run(plan: plan, workerCount: workerCount, candidateCount: candidateCount,
+                             progress: progress, prediction: prediction)
+    }
+}
+
+private extension R117ConcurrentEncoder {
+    private struct CompletedGroup: Sendable {
+        let group: R117Last2Plan.Group
+        let worker: Int
+        let features: [Features]
+    }
+
+    private static func run(
+        plan: R117Last2Plan, workerCount: Int, candidateCount: Int,
+        progress: (@Sendable (Int, Int) -> Void)?, prediction: @escaping WorkerPrediction
+    ) async throws -> [[Float]] {
         return try await withThrowingTaskGroup(of: CompletedGroup.self) { tasks in
             var rows: [[Float]?] = Array(repeating: nil, count: candidateCount)
-            var next = min(2, plan.groups.count)
+            var next = min(2 * workerCount, plan.groups.count)
             var completed = 0
             var nextProgress = 20
             for index in 0..<next {
-                submit(plan.groups[index], to: &tasks, prediction: prediction)
+                submit(plan.groups[index], worker: index % workerCount,
+                       to: &tasks, prediction: prediction)
             }
             while let result = try await tasks.next() {
                 try Task.checkCancellation()
@@ -47,7 +91,8 @@ nonisolated enum R117ConcurrentEncoder {
                 }
                 if next < plan.groups.count {
                     try Task.checkCancellation()
-                    submit(plan.groups[next], to: &tasks, prediction: prediction)
+                    submit(plan.groups[next], worker: result.worker,
+                           to: &tasks, prediction: prediction)
                     next += 1
                 }
             }
@@ -57,13 +102,6 @@ nonisolated enum R117ConcurrentEncoder {
                 return row
             }
         }
-    }
-}
-
-private extension R117ConcurrentEncoder {
-    private struct CompletedGroup: Sendable {
-        let group: R117Last2Plan.Group
-        let features: [Features]
     }
 
     private static func validate(_ plan: R117Last2Plan, candidateCount: Int) throws {
@@ -76,14 +114,15 @@ private extension R117ConcurrentEncoder {
     }
 
     private static func submit(
-        _ group: R117Last2Plan.Group, to tasks: inout ThrowingTaskGroup<CompletedGroup, Error>,
-        prediction: @escaping Prediction
+        _ group: R117Last2Plan.Group, worker: Int,
+        to tasks: inout ThrowingTaskGroup<CompletedGroup, Error>,
+        prediction: @escaping WorkerPrediction
     ) {
         tasks.addTask {
             try Task.checkCancellation()
-            let features = try await prediction(group)
+            let features = try await prediction(group, worker)
             try Task.checkCancellation()
-            return CompletedGroup(group: group, features: features)
+            return CompletedGroup(group: group, worker: worker, features: features)
         }
     }
 

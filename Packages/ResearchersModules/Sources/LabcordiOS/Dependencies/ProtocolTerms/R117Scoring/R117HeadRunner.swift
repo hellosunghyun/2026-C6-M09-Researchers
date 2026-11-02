@@ -2,11 +2,12 @@ import CoreML
 import Foundation
 
 /// 한 번 컴파일한 패키지를 공유하며, 원본 평가처럼 CPU에서 호출합니다.
-/// 호출자는 추론 순서를 직렬화하고 SwiftData/화면 상태와 수명을 분리해야 합니다.
+/// 호출자는 모델 캐시 접근을 한 actor에서 직렬화하고 화면 상태와 수명을 분리해야 합니다.
 nonisolated final class R117HeadRunner {
     private let compiledPackageURL: URL
     private let hgb: MLModel
     private var models: [String: MLModel] = [:]
+    private var last2Models: [MLModel]?
 
     init(resourceDirectory: URL) throws {
         let package = resourceDirectory.appendingPathComponent("R117WithTeacherModels.mlpackage")
@@ -86,11 +87,39 @@ nonisolated final class R117HeadRunner {
 
     func model(function: String) throws -> MLModel {
         if let cached = models[function] { return cached }
+        let loaded = try load(function: function)
+        models[function] = loaded
+        return loaded
+    }
+
+    func last2ModelPool(maximumModels: Int = 4) throws -> [MLModel] {
+        try Task.checkCancellation()
+        let count = min(max(1, maximumModels), Self.encoderModelCount(
+            processors: ProcessInfo.processInfo.activeProcessorCount
+        ))
+        var pool: [MLModel]
+        if let cached = last2Models {
+            pool = cached
+        } else {
+            pool = [try model(function: "teacher_last2")]
+        }
+        while pool.count < count {
+            try Task.checkCancellation()
+            pool.append(try load(function: "teacher_last2"))
+        }
+        try Task.checkCancellation()
+        last2Models = pool
+        return Array(pool.prefix(count))
+    }
+
+    static func encoderModelCount(processors: Int) -> Int {
+        min(4, max(1, processors / 2))
+    }
+
+    private func load(function: String) throws -> MLModel {
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuOnly
         configuration.functionName = function
-        let loaded = try MLModel(contentsOf: compiledPackageURL, configuration: configuration)
-        models[function] = loaded
-        return loaded
+        return try MLModel(contentsOf: compiledPackageURL, configuration: configuration)
     }
 }

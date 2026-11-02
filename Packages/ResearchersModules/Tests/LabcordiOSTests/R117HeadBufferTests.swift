@@ -35,6 +35,30 @@ final class R117HeadBufferTests: XCTestCase {
         }
     }
 
+    func testEncoderModelPoolReusesInstancesAndRespectsProcessorLimit() throws {
+        XCTAssertEqual([0, 1, 2, 4, 6, 8, 10].map {
+            R117HeadRunner.encoderModelCount(processors: $0)
+        }, [1, 1, 1, 2, 3, 4, 4])
+        let directory = try XCTUnwrap(R117TermExtractor.resourceDirectory)
+        let runner = try R117HeadRunner(resourceDirectory: directory)
+        let first = try runner.last2ModelPool()
+        let second = try runner.last2ModelPool()
+        XCTAssertTrue((1...4).contains(first.count))
+        XCTAssertEqual(Set(first.map(ObjectIdentifier.init)).count, first.count)
+        XCTAssertEqual(first.map(ObjectIdentifier.init), second.map(ObjectIdentifier.init))
+    }
+
+    func testSmallInputLoadsOnlyNecessaryModelsAndLaterGrowsThePool() throws {
+        let directory = try XCTUnwrap(R117TermExtractor.resourceDirectory)
+        let runner = try R117HeadRunner(resourceDirectory: directory)
+        let small = try runner.last2ModelPool(maximumModels: 1)
+        XCTAssertEqual(small.count, 1)
+        let grown = try runner.last2ModelPool()
+        XCTAssertTrue(grown.first === small.first)
+        let returned = try runner.last2ModelPool(maximumModels: 1)
+        XCTAssertEqual(returned.map(ObjectIdentifier.init), small.map(ObjectIdentifier.init))
+    }
+
     func testInvalidFeatureShapesAndNonfiniteValuesAreRejected() throws {
         let directory = try XCTUnwrap(R117TermExtractor.resourceDirectory)
         let runner = try R117HeadRunner(resourceDirectory: directory)
