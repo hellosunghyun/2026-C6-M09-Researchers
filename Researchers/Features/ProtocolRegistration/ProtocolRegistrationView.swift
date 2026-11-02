@@ -12,13 +12,13 @@ struct ProtocolRegistrationView: View {
     @State private var filePickerPresented = false
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var importFailed = false
-    @State private var analysisTask: Task<Void, Never>?
+    @State private var recoveryFailed = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showReviewConfirmation = false
     @State private var showSkipConfirmation = false
     @State private var showExitConfirmation = false
     @State private var skipAfterCancellation = false
-    @Dependency(\.protocolAnalysisClient) private var analysisClient
-    @Dependency(\.protocolTermClient) private var termClient
+    @Dependency(\.protocolAnalysisJobManager) private var jobManager
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,6 +83,9 @@ struct ProtocolRegistrationView: View {
                     }
                     .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 }
+                if let message = store.analysisMessage, store.analysisID == nil {
+                    Text(message).typography(Typography.subheadline)
+                }
                 if store.analysisID == nil && store.analysisFailed {
                     Text(store.pendingParsingInputs.isEmpty
                          ? "일부 파일에서 용어를 추출하지 못했어요. 다시 시도해 주세요."
@@ -115,14 +118,17 @@ struct ProtocolRegistrationView: View {
                 .accessibilityIdentifier("entry-skip")
 
                 EntryNextButton(
-                    enabled: !store.pendingInputs.isEmpty && !store.importing
+                    enabled: (!store.pendingInputs.isEmpty || store.analysisPaused)
+                        && !store.importing
                         && !store.isSaving && store.analysisID == nil,
-                    retry: store.analysisFailed,
+                    retry: store.analysisFailed || store.analysisPaused,
                     action: analyze
                 )
             }
             .padding(.horizontal, 16)
         }
+        .accessibilityHidden(store.analysisID != nil || store.showsAnalysisCompletion)
+        .allowsHitTesting(store.analysisID == nil && !store.showsAnalysisCompletion)
         .overlay {
             if store.analysisID != nil {
                 ProtocolAnalysisProgressView(
@@ -131,7 +137,8 @@ struct ProtocolRegistrationView: View {
                     inputNumber: store.analysisInputNumber,
                     inputCount: store.selectedInputs.count,
                     startedAt: store.analysisStartedAt,
-                    isCancelling: store.analysisCancellationRequested
+                    isCancelling: store.analysisCancellationRequested,
+                    notice: store.analysisMessage
                 ) {
                     showSkipConfirmation = true
                 }
@@ -154,6 +161,11 @@ struct ProtocolRegistrationView: View {
         } message: {
             Text("실험은 등록되지 않았어요. 다시 시도해 주세요.")
         }
+        .alert("이전 분석을 불러오지 못했어요", isPresented: $recoveryFailed) {
+            Button("확인", role: .cancel) { }
+        } message: {
+            Text("보관한 파일은 지우지 않았어요. 나중에 다시 시도하거나 파일을 다시 선택해 주세요.")
+        }
         .alert("파일을 가져오지 못했어요", isPresented: $importFailed) {
             Button("확인", role: .cancel) { }
         } message: {
@@ -170,7 +182,9 @@ struct ProtocolRegistrationView: View {
                 if store.analysisID != nil {
                     skipAfterCancellation = true
                     store.send(.cancelAnalysis)
-                    analysisTask?.cancel()
+                    if let id = store.analysisID {
+                        Task { await jobManager.cancel(id: id) }
+                    }
                 } else {
                     store.send(.skipTapped)
                 }
@@ -202,10 +216,25 @@ struct ProtocolRegistrationView: View {
             case .failure: importFailed = true
             }
         }
-        .onDisappear {
-            guard store.analysisID != nil else { return }
-            store.send(.cancelAnalysis)
-            analysisTask?.cancel()
+        .task {
+            do {
+                if let saved = try await jobManager.restore() {
+                    store.send(.restoreAnalysisJob(saved))
+                }
+            } catch {
+                recoveryFailed = true
+            }
+            for await update in await jobManager.updates() {
+                guard !Task.isCancelled else { break }
+                store.send(.analysisJobUpdated(update))
+                if update.status == .cancelled, skipAfterCancellation {
+                    skipAfterCancellation = false
+                    store.send(.skipTapped)
+                }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { Task { await jobManager.enteredBackground() } }
         }
         .navigationBarBackButtonHidden()
         .toolbar(.hidden, for: .navigationBar)
@@ -246,6 +275,9 @@ private extension ProtocolRegistrationView {
         } else {
             messages.append("추출한 타이머와 용어를 확인하고 필요하면 수정해 주세요.")
         }
+        if store.hasAmbiguousTimers {
+            messages.append("시간 범위와 조건은 타이머에 자동 추가하지 않았어요. 원문을 확인해 주세요.")
+        }
         if store.analysisTerms.values.contains(where: \.usedFallback) {
             messages.append("일부 용어를 자동 분류하지 못했어요. 분류를 확인해 주세요.")
         }
@@ -262,52 +294,26 @@ private extension ProtocolRegistrationView {
 
     func analyze() {
         guard store.analysisID == nil, !store.importing, !store.isSaving else { return }
-        let retainedInputs = store.pendingInputs
-        guard !retainedInputs.isEmpty else { return }
-        let pendingIDs = Set(retainedInputs.map(\.id))
-        let cachedResults = store.successfulResults.filter { pendingIDs.contains($0.id) }
-        let cachedIDs = Set(cachedResults.map(\.id))
-        let inputs = retainedInputs.filter { !cachedIDs.contains($0.id) }
-            .map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
-        let id = UUID()
+        let inputs = store.selectedInputs.map { input in
+            ProtocolAnalysisJobInput(
+                id: input.id, url: input.url, name: input.name,
+                isPhoto: store.importedPhotos.contains { $0.id == input.id }
+            )
+        }
+        guard !inputs.isEmpty else { return }
+        let previousID = store.analysisJobID
+        let id = previousID ?? UUID()
         store.send(.startAnalysis(id))
         guard store.analysisID == id else { return }
-        analysisTask = Task {
-            defer { withExtendedLifetime(retainedInputs) {} }
-            let results: [ProtocolAnalysisItem]?
+        Task {
             do {
-                let parsed = inputs.isEmpty ? [] : try await analysisClient.parseReportingProgress(
-                    inputs
-                ) { [store] inputID, phase in
-                    await MainActor.run {
-                        store.send(.analysisReadingProgress(id, inputID, phase))
-                    }
+                if previousID != nil {
+                    try await jobManager.resume(id: id)
+                } else {
+                    try await jobManager.start(id: id, inputs: inputs)
                 }
-                results = cachedResults + parsed
             } catch {
-                results = cachedResults.isEmpty ? nil : cachedResults
-            }
-            var terms: [UUID: ProtocolExtractedTerms] = [:]
-            if let results, !Task.isCancelled {
-                for item in results {
-                    guard !Task.isCancelled, let text = item.extractedText else { continue }
-                    store.send(.analysisInputChanged(id, item.id))
-                    store.send(.analysisPhaseChanged(id, item.id, .termsPending))
-                    terms[item.id] = try? await termClient.extractWithProgress(
-                        text
-                    ) { [store] phase in
-                        await MainActor.run {
-                            store.send(.analysisPhaseChanged(id, item.id, .terms(phase)))
-                        }
-                    }
-                }
-            }
-            guard store.analysisID == id else { return }
-            store.send(.analysisFinished(id, results, terms))
-            analysisTask = nil
-            if skipAfterCancellation {
-                skipAfterCancellation = false
-                store.send(.skipTapped)
+                store.send(.analysisJobFailed(id))
             }
         }
     }

@@ -14,11 +14,15 @@ nonisolated struct ImportedProtocolInput: Identifiable, Equatable, Sendable, Tra
     let name: String
     private let ownership: ImportedInputOwnership
 
-    private init(id: UUID, url: URL, name: String) {
+    private init(id: UUID, url: URL, name: String, removeOnRelease: Bool = true) {
         self.id = id
         self.url = url
         self.name = name
-        self.ownership = ImportedInputOwnership(url: url)
+        self.ownership = ImportedInputOwnership(url: url, removeOnRelease: removeOnRelease)
+    }
+
+    static func recovered(id: UUID, url: URL, name: String) -> Self {
+        Self(id: id, url: url, name: name, removeOnRelease: false)
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -84,12 +88,15 @@ nonisolated struct ImportedProtocolInput: Identifiable, Equatable, Sendable, Tra
 
 private nonisolated final class ImportedInputOwnership: @unchecked Sendable {
     private let url: URL
+    private let removeOnRelease: Bool
 
-    init(url: URL) {
+    init(url: URL, removeOnRelease: Bool) {
         self.url = url
+        self.removeOnRelease = removeOnRelease
     }
 
     deinit {
+        guard removeOnRelease else { return }
         try? FileManager.default.removeItem(at: url)
     }
 }

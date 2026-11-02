@@ -9,6 +9,7 @@ nonisolated enum ProtocolSource: String, Equatable, Sendable {
 }
 
 nonisolated enum ProtocolAnalysisPhase: Equatable, Sendable {
+    case queued
     case reading
     case readingDocument(ProtocolReadingPhase)
     case termsPending
@@ -25,6 +26,9 @@ struct ProtocolRegistrationFeature {
         var importing = false
         var importedPhotos: [ImportedProtocolInput] = []
         var importedFile: ImportedProtocolInput?
+        var analysisJobID: UUID?
+        var analysisMessage: String?
+        var analysisPaused = false
         var analysisID: UUID?
         var analysisPhase = ProtocolAnalysisPhase.reading
         var analysisStartedAt: Date?
@@ -35,14 +39,6 @@ struct ProtocolRegistrationFeature {
         /// 분석에 성공한 문서별 추출 용어입니다. 추출에 실패한 문서는 값이 없습니다.
         var analysisTerms: [UUID: ProtocolExtractedTerms] = [:]
         var analysisFailed = false
-
-        var analysisInput: ImportedProtocolInput? {
-            selectedInputs.first { $0.id == analysisInputID }
-        }
-
-        var analysisInputNumber: Int? {
-            selectedInputs.firstIndex { $0.id == analysisInputID }.map { $0 + 1 }
-        }
 
         var selectedInputs: [ImportedProtocolInput] {
             importedPhotos + (importedFile.map { [$0] } ?? [])
@@ -74,7 +70,7 @@ struct ProtocolRegistrationFeature {
         }
 
         var requiresReviewConfirmation: Bool {
-            !pendingParsingInputs.isEmpty || termExtractionFailed
+            !pendingParsingInputs.isEmpty || termExtractionFailed || hasAmbiguousTimers
                 || successfulResults.contains(where: \.hasWarnings)
                 || analysisTerms.values.contains(where: \.usedFallback)
         }
@@ -83,29 +79,6 @@ struct ProtocolRegistrationFeature {
             successfulResults.contains { analysisTerms[$0.id] == nil }
         }
 
-        /// 현재 선택된 문서 중 분석에 성공한 문서의 용어를 분류별로 합칩니다.
-        /// 같은 용어는 먼저 나온 분류에만 남깁니다.
-        var extractedTerms: [ProtocolTermCategory: [String]] {
-            var seen = Set<String>()
-            var merged: [ProtocolTermCategory: [String]] = [:]
-            for item in successfulResults {
-                guard let terms = analysisTerms[item.id] else { continue }
-                let groups: [(ProtocolTermCategory, [String])] = [
-                    (.materials, terms.materials), (.samples, terms.samples),
-                    (.glossary, terms.glossaryTerms), (.units, terms.units)
-                ]
-                for (category, values) in groups {
-                    for value in values {
-                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty,
-                              seen.insert(ProtocolReviewTerm.comparisonKey(trimmed)).inserted
-                        else { continue }
-                        merged[category, default: []].append(trimmed)
-                    }
-                }
-            }
-            return merged
-        }
     }
 
     enum Action: Equatable {
@@ -122,6 +95,9 @@ struct ProtocolRegistrationFeature {
         case fileImported(ImportedProtocolInput)
         case removePhoto(UUID)
         case removeFile
+        case restoreAnalysisJob(ProtocolAnalysisJobSnapshot)
+        case analysisJobUpdated(ProtocolAnalysisJobSnapshot)
+        case analysisJobFailed(UUID)
         case startAnalysis(UUID)
         case analysisPhaseChanged(UUID, UUID, ProtocolAnalysisPhase)
         case analysisInputChanged(UUID, UUID)
@@ -139,18 +115,25 @@ struct ProtocolRegistrationFeature {
     @Dependency(\.experimentClient) var experimentClient
     @Dependency(\.uuid) var uuid
     @Dependency(\.date.now) var now
+    @Dependency(\.protocolAnalysisJobManager) var jobManager
 
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
             case .backTapped:
                 guard !state.importing, state.analysisID == nil else { return .none }
+                let jobID = state.analysisJobID
                 state.clearInputs()
-                return .none
+                return .run { _ in
+                    if let jobID { await jobManager.cancel(id: jobID) }
+                }
 
             case .clearImportedInputs:
+                let jobID = state.analysisJobID
                 state.clearInputs()
-                return .none
+                return .run { _ in
+                    if let jobID { await jobManager.cancel(id: jobID) }
+                }
 
             case .skipTapped:
                 guard !state.isSaving, !state.hasFailed, !state.importing,
@@ -174,8 +157,12 @@ struct ProtocolRegistrationFeature {
                 switch result {
                 case let .success(entry):
                     state.pendingID = nil
+                    let jobID = state.analysisJobID
                     state.clearInputs()
-                    return .send(.saveSucceeded(entry))
+                    return .run { send in
+                        if let jobID { await jobManager.cancel(id: jobID) }
+                        await send(.saveSucceeded(entry))
+                    }
                 case .failure:
                     state.hasFailed = true
                     return .none
@@ -201,10 +188,14 @@ struct ProtocolRegistrationFeature {
                 return .none
 
             case let .photoImported(input):
+                state.analysisJobID = nil
+                state.analysisMessage = nil
                 state.importedPhotos.append(input)
                 return .none
 
             case let .fileImported(input):
+                state.analysisJobID = nil
+                state.analysisMessage = nil
                 if let id = state.importedFile?.id { state.clearAnalysis(for: id) }
                 state.importedFile = input
                 return .none
@@ -213,19 +204,29 @@ struct ProtocolRegistrationFeature {
                 guard let index = state.importedPhotos.firstIndex(where: { $0.id == id }) else {
                     return .none
                 }
+                state.analysisJobID = nil
+                state.analysisMessage = nil
                 state.importedPhotos.remove(at: index)
                 state.clearAnalysis(for: id)
                 return .none
 
             case .removeFile:
+                state.analysisJobID = nil
+                state.analysisMessage = nil
                 if let id = state.importedFile?.id { state.clearAnalysis(for: id) }
                 state.importedFile = nil
                 return .none
 
+            case .restoreAnalysisJob, .analysisJobUpdated, .analysisJobFailed:
+                return reduceAnalysisJob(into: &state, action: action)
+
             case let .startAnalysis(id):
                 guard state.analysisID == nil, !state.importing, !state.isSaving,
-                      !state.pendingInputs.isEmpty else { return .none }
+                      !state.pendingInputs.isEmpty || state.analysisPaused else { return .none }
                 state.analysisID = id
+                state.analysisJobID = id
+                state.analysisMessage = nil
+                state.analysisPaused = false
                 state.analysisStartedAt = now
                 state.analysisInputID = state.pendingInputs.first?.id
                 state.showsAnalysisCompletion = false
@@ -304,6 +305,9 @@ private extension ProtocolRegistrationFeature.State {
         importedPhotos = []
         importedFile = nil
         analysisID = nil
+        analysisJobID = nil
+        analysisMessage = nil
+        analysisPaused = false
         analysisStartedAt = nil
         analysisInputID = nil
         showsAnalysisCompletion = false

@@ -36,7 +36,7 @@ nonisolated public enum ProtocolReadingPhase: String, Equatable, Sendable {
     case identifying, extracting, recognizingText, completed, failed, cancelled
 }
 
-public struct ProtocolAnalysisClient: Sendable {
+nonisolated public struct ProtocolAnalysisClient: Sendable {
     public typealias Progress = @Sendable (UUID, ProtocolReadingPhase) -> Void
 
     public var parse: @Sendable (
@@ -76,7 +76,7 @@ public struct ProtocolAnalysisClient: Sendable {
 }
 
 extension ProtocolAnalysisClient: DependencyKey {
-    public static let liveValue = ProtocolAnalysisClient { inputs, progress in
+    nonisolated public static let liveValue = ProtocolAnalysisClient { inputs, progress in
         let results = try await DocumentParser.parseBatch(
             inputs.map { .url($0.url) },
             options: DocumentParserOptions(performOCR: true)

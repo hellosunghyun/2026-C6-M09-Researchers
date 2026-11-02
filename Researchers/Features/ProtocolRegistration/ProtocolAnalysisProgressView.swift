@@ -9,11 +9,13 @@ struct ProtocolAnalysisProgressView: View {
     let inputCount: Int
     let startedAt: Date?
     let isCancelling: Bool
+    var notice: String?
     let onCancel: () -> Void
 
     private var statusText: String {
         if isCancelling { return "분석 취소 중..." }
         switch phase {
+        case .queued: return "시스템에서 분석 시작을 기다리고 있어요"
         case .reading: return "프로토콜을 읽고 있어요"
         case let .readingDocument(phase):
             switch phase {
@@ -79,6 +81,13 @@ struct ProtocolAnalysisProgressView: View {
                         ), in: Capsule())
                         .padding(.top, 48)
 
+                    if let notice {
+                        Text(notice)
+                            .typography(Typography.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 12)
+                    }
                     if let inputName {
                         VStack(spacing: 4) {
                             if let inputNumber {
