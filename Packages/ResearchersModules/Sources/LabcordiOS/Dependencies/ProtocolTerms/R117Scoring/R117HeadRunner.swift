@@ -40,18 +40,24 @@ nonisolated final class R117HeadRunner {
             let array = try MLMultiArray(
                 shape: [NSNumber(value: rows.count), NSNumber(value: width)], dataType: .float32
             )
-            for (rowIndex, row) in rows.enumerated() {
-                for (column, value) in row.enumerated() {
-                    array[rowIndex * width + column] = NSNumber(value: value)
+            array.withUnsafeMutableBufferPointer(ofType: Float.self) { values, strides in
+                for (rowIndex, row) in rows.enumerated() {
+                    for (column, value) in row.enumerated() {
+                        values[rowIndex * strides[0] + column * strides[1]] = value
+                    }
                 }
             }
             let input = try MLDictionaryFeatureProvider(dictionary: [inputName: array])
             let output = try model.prediction(from: input)
             guard let logits = output.featureValue(for: "logits")?.multiArrayValue,
-                  logits.shape.map(\.intValue) == [rows.count, 1] else {
+                  logits.shape.map(\.intValue) == [rows.count, 1],
+                  logits.dataType == .float32 else {
                 throw R117ScoringError.invalidModelOutput
             }
-            result += (0..<rows.count).map { logits[$0].doubleValue }
+            result += logits.withUnsafeBufferPointer(ofType: Float.self) { values in
+                let stride = logits.strides[0].intValue
+                return (0..<rows.count).map { Double(values[$0 * stride]) }
+            }
         }
         guard result.allSatisfy(\.isFinite) else { throw R117ScoringError.invalidModelOutput }
         return result
