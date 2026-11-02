@@ -7,12 +7,15 @@ nonisolated final class R117Encoder {
         let vectors: [[Double]]
 
         func pooled(in range: Range<Int>) throws -> [Float] {
-            let overlaps = offsets.map { max(0, min($0.upperBound, range.upperBound)
-                - max($0.lowerBound, range.lowerBound)) }
-            let total = overlaps.reduce(0, +)
+            let overlaps = offsets.enumerated().compactMap { index, offset -> (Int, Int)? in
+                let weight = max(0, min(offset.upperBound, range.upperBound)
+                    - max(offset.lowerBound, range.lowerBound))
+                return weight > 0 ? (index, weight) : nil
+            }
+            let total = overlaps.reduce(0) { $0 + $1.1 }
             guard total > 0 else { throw R117RuntimeError.uncoveredSource }
             var output = Array(repeating: 0.0, count: 384)
-            for (index, weight) in overlaps.enumerated() where weight > 0 {
+            for (index, weight) in overlaps {
                 let scale = Double(Float(weight) / Float(total))
                 for column in 0..<384 { output[column] += vectors[index][column] * scale }
             }
@@ -36,7 +39,16 @@ nonisolated final class R117Encoder {
         func relativeFeatures(
             text: String, spans: [Range<Int>], contextTokenLimit: Int? = nil
         ) throws -> [[Float]] {
-            let count = text.unicodeScalars.count
+            let scalars = Array(text.unicodeScalars)
+            let count = scalars.count
+            var covered = Array(repeating: false, count: count)
+            for offset in offsets {
+                let lower = max(0, offset.lowerBound)
+                let upper = min(count, offset.upperBound)
+                if lower < upper {
+                    for position in lower..<upper { covered[position] = true }
+                }
+            }
             let context: Document
             if let limit = contextTokenLimit {
                 context = Document(
@@ -47,7 +59,13 @@ nonisolated final class R117Encoder {
             }
             let document = try context.pooled(in: 0..<count)
             return try spans.map { range in
-                try validateCoverage(text: text, range: range)
+                guard range.lowerBound >= 0, range.upperBound <= count, !range.isEmpty else {
+                    throw R117RuntimeError.invalidCandidate
+                }
+                for position in range where !scalars[position].properties.isWhitespace {
+                    if scalars[position].properties.generalCategory == .control { continue }
+                    guard covered[position] else { throw R117RuntimeError.uncoveredSource }
+                }
                 return R117Encoder.relative(try pooled(in: range), context: document)
             }
         }
@@ -87,57 +105,48 @@ nonisolated final class R117Encoder {
         text: String, spans: [Range<Int>],
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> [[Float]] {
-        let scalars = Array(text.unicodeScalars)
+        let plan = try R117Last2Plan(text: text, spans: spans, tokenizer: tokenizer)
         let model = try runner.model(function: "teacher_last2")
-        return try spans.enumerated().map { index, range in
+        var results = Array(repeating: [Float](), count: spans.count)
+        var completed = 0
+        var nextProgress = 20
+        for group in plan.groups {
             try Task.checkCancellation()
-            let left = max(0, range.lowerBound - 160)
-            let right = min(scalars.count, range.upperBound + 160)
-            let context = String(String.UnicodeScalarView(scalars[left..<right]))
-            let normalized = String(String.UnicodeScalarView(context.unicodeScalars.map { scalar in
-                scalar.properties.generalCategory == .control
-                    && scalar != "\n" && scalar != "\r" && scalar != "\t" ? " " : scalar
-            }))
-            let encoding = try tokenizer.encode(normalized)
-            let ids = Array(encoding.ids.prefix(510))
-            let offsets = Array(encoding.offsets.prefix(510))
-            let local = (range.lowerBound - left)..<(range.upperBound - left)
-            let selected = offsets.indices.filter { offsets[$0].overlaps(local) }
-            let ledger = Document(offsets: offsets, vectors: [])
-            try ledger.validateCoverage(text: normalized, range: local)
-            guard !selected.isEmpty else { throw R117RuntimeError.uncoveredSource }
-            let hidden = try predict(model: model, ids: [0] + ids + [2])
-            var pooled = Array(repeating: Float(0), count: 384)
-            for index in selected {
-                for column in 0..<384 { pooled[column] += hidden[index + 1][column] }
+            try autoreleasepool {
+                let input = try R117Tensor.input(ids: group.ids)
+                let prediction = try model.prediction(from: input)
+                let output = try R117Tensor.embeddings(from: prediction, length: group.ids.count)
+                for selection in group.selections {
+                    results[selection.candidate] = R117Tensor.pooled(
+                        output, selected: selection.tokens
+                    )
+                }
             }
-            let result = pooled.map { $0 / Float(selected.count) }
-            let completed = index + 1
-            if completed.isMultiple(of: 20) || completed == spans.count {
+            completed += group.selections.count
+            if completed >= nextProgress || completed == spans.count {
                 progress?(completed, spans.count)
+                nextProgress = completed + 20
             }
-            return result
         }
+        return results
+    }
+
+    func last2Concurrently(
+        text: String, spans: [Range<Int>],
+        isolation: isolated (any Actor)? = #isolation,
+        progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) async throws -> [[Float]] {
+        let plan = try R117Last2Plan(text: text, spans: spans, tokenizer: tokenizer)
+        let model = try runner.model(function: "teacher_last2")
+        return try await R117ConcurrentEncoder.last2(
+            plan: plan, model: model, candidateCount: spans.count, progress: progress
+        )
     }
 
     func predict(model: MLModel, ids: [Int]) throws -> [[Float]] {
-        let length = max(2, ids.count)
-        let shape = [NSNumber(value: 1), NSNumber(value: length)]
-        let input = try MLMultiArray(shape: shape, dataType: .int32)
-        let mask = try MLMultiArray(shape: shape, dataType: .int32)
-        for index in 0..<length {
-            input[index] = NSNumber(value: index < ids.count ? ids[index] : 1)
-            mask[index] = NSNumber(value: index < ids.count ? 1 : 0)
-        }
-        let provider = try MLDictionaryFeatureProvider(dictionary: [
-            "ids": input, "attention_mask": mask
-        ])
-        let prediction = try model.prediction(from: provider)
-        guard let output = prediction.featureValue(for: "token_embeddings")?.multiArrayValue,
-              output.count == length * 384 else { throw R117RuntimeError.invalidModelOutput }
-        return (0..<ids.count).map { row in
-            (0..<384).map { output[row * 384 + $0].floatValue }
-        }
+        let prediction = try model.prediction(from: R117Tensor.input(ids: ids))
+        let output = try R117Tensor.embeddings(from: prediction, length: ids.count)
+        return R117Tensor.rows(output, count: ids.count)
     }
 
     static func relative(_ candidate: [Float], context: [Float]) -> [Float] {

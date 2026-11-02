@@ -86,7 +86,9 @@ private actor R117ExtractionRuntime {
         _ ranker: R117Ranker, text: String, spans: [R117CandidateSpan],
         progress: ProtocolTermClient.Progress?
     ) async throws -> R117Ranker.Result {
-        guard let progress else { return try ranker.scores(text: text, spans: spans) }
+        guard let progress else {
+            return try await ranker.scoresConcurrently(text: text, spans: spans)
+        }
         let (events, continuation) = AsyncStream<(Int, Int)>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
@@ -96,7 +98,9 @@ private actor R117ExtractionRuntime {
             }
         }
         do {
-            let result = try ranker.scores(text: text, spans: spans) { completed, total in
+            let result = try await ranker.scoresConcurrently(
+                text: text, spans: spans
+            ) { completed, total in
                 continuation.yield((completed, total))
             }
             continuation.finish()
