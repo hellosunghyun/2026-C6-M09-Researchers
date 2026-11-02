@@ -1,0 +1,90 @@
+import CoreML
+import Foundation
+
+/// 한 번 컴파일한 패키지를 공유하며, 원본 평가처럼 CPU에서 호출합니다.
+/// 호출자는 추론 순서를 직렬화하고 SwiftData/화면 상태와 수명을 분리해야 합니다.
+nonisolated final class R117HeadRunner {
+    private let compiledPackageURL: URL
+    private let hgb: MLModel
+    private var models: [String: MLModel] = [:]
+
+    init(resourceDirectory: URL) throws {
+        let package = resourceDirectory.appendingPathComponent("R117WithTeacherModels.mlpackage")
+        compiledPackageURL = try MLModel.compileModel(at: package)
+        let hgbURL = resourceDirectory.appendingPathComponent("HGBTeacher.mlmodel")
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuOnly
+        hgb = try MLModel(
+            contentsOf: MLModel.compileModel(at: hgbURL), configuration: configuration
+        )
+        let constraint = hgb.modelDescription.inputDescriptionsByName["handcrafted_features"]?
+            .multiArrayConstraint
+        guard constraint?.shape.map(\.intValue) == [32], constraint?.dataType == .double else {
+            throw R117ScoringError.invalidFeatures
+        }
+    }
+
+    func predictHead(
+        function: String, features: [[Float]], inputName: String = "features"
+    ) throws -> [Double] {
+        let width = inputName == "pooled_features" ? 384 : 769
+        guard !features.isEmpty, features.allSatisfy({
+            $0.count == width && $0.allSatisfy(\.isFinite)
+        }) else { throw R117ScoringError.invalidFeatures }
+        let model = try model(function: function)
+        var result: [Double] = []
+        result.reserveCapacity(features.count)
+        for begin in stride(from: 0, to: features.count, by: 8_192) {
+            try Task.checkCancellation()
+            let rows = Array(features[begin..<min(begin + 8_192, features.count)])
+            let array = try MLMultiArray(
+                shape: [NSNumber(value: rows.count), NSNumber(value: width)], dataType: .float32
+            )
+            for (rowIndex, row) in rows.enumerated() {
+                for (column, value) in row.enumerated() {
+                    array[rowIndex * width + column] = NSNumber(value: value)
+                }
+            }
+            let input = try MLDictionaryFeatureProvider(dictionary: [inputName: array])
+            let output = try model.prediction(from: input)
+            guard let logits = output.featureValue(for: "logits")?.multiArrayValue,
+                  logits.shape.map(\.intValue) == [rows.count, 1] else {
+                throw R117ScoringError.invalidModelOutput
+            }
+            result += (0..<rows.count).map { logits[$0].doubleValue }
+        }
+        guard result.allSatisfy(\.isFinite) else { throw R117ScoringError.invalidModelOutput }
+        return result
+    }
+
+    func predictHGB(features: [[Double]]) throws -> [Double] {
+        guard !features.isEmpty, features.allSatisfy({
+            $0.count == 32 && $0.allSatisfy(\.isFinite)
+        }), hgb.modelDescription.outputDescriptionsByName.count == 1,
+              let outputName = hgb.modelDescription.outputDescriptionsByName.keys.first else {
+            throw R117ScoringError.invalidFeatures
+        }
+        return try features.map { row in
+            try Task.checkCancellation()
+            let array = try MLMultiArray(shape: [32], dataType: .double)
+            for (index, value) in row.enumerated() { array[index] = NSNumber(value: value) }
+            let input = try MLDictionaryFeatureProvider(dictionary: [
+                "handcrafted_features": array
+            ])
+            let output = try hgb.prediction(from: input)
+            guard let value = output.featureValue(for: outputName), value.type == .double,
+                  value.doubleValue.isFinite else { throw R117ScoringError.invalidModelOutput }
+            return value.doubleValue
+        }
+    }
+
+    func model(function: String) throws -> MLModel {
+        if let cached = models[function] { return cached }
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuOnly
+        configuration.functionName = function
+        let loaded = try MLModel(contentsOf: compiledPackageURL, configuration: configuration)
+        models[function] = loaded
+        return loaded
+    }
+}
