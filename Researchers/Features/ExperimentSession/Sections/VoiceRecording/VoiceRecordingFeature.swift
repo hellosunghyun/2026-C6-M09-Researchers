@@ -32,9 +32,11 @@ struct VoiceRecordingFeature {
         var isSaving = false
         var saveError: String?
         var isAutoSavePending = false
+        var contextualStrings: [String] = []
     }
 
     enum Action: Equatable {
+        case detailLoadFailed
         case prepareRequested
         case overlayAppeared
         case startRequested
@@ -70,6 +72,10 @@ struct VoiceRecordingFeature {
     var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
+            case .detailLoadFailed:
+                state.errorMessage = "실험 정보를 불러오지 못했어요. 다시 시도해 주세요."
+                return .none
+
             case .prepareRequested:
                 guard state.phase == .hidden else { return .none }
                 state.transcript = ""
@@ -86,9 +92,10 @@ struct VoiceRecordingFeature {
             case .startRequested:
                 guard state.phase == .starting else { return .none }
                 let id = state.sessionID
+                let contextualStrings = state.contextualStrings
                 return .run { send in
                     do {
-                        let events = try await speechRecordingClient.start()
+                        let events = try await speechRecordingClient.start(contextualStrings)
                         await send(.started(id))
                         for await event in events {
                             await send(.event(id, event))

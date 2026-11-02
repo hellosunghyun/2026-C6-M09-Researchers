@@ -9,6 +9,8 @@ struct ExperimentSessionFeature {
     struct State: Equatable {
         let experimentID: UUID
         var detail: ExperimentSessionDetail?
+        var isLoadingDetail = false
+        var pendingVoiceStart = false
         var timer: SessionTimerFeature.State
 
         var permissions = SessionPermissionsFeature.State()
@@ -45,6 +47,7 @@ struct ExperimentSessionFeature {
     enum Action: Equatable {
         case loadDetail
         case detailLoaded(ExperimentSessionDetail)
+        case detailLoadFailed
         case timer(SessionTimerFeature.Action)
         case permissions(SessionPermissionsFeature.Action)
         case voice(VoiceRecordingFeature.Action)
@@ -91,26 +94,16 @@ struct ExperimentSessionFeature {
         Reduce { state, action in
             switch action {
             case .loadDetail:
-                let experimentID = state.experimentID
-                return .run { send in
-                    await timerCompletionNotificationClient.cancelForExperiment(experimentID)
-                    guard let detail = try? await experimentClient.loadDetail(experimentID) else {
-                        return
-                    }
-                    await send(.detailLoaded(detail))
-                }
+                return loadDetail(state: &state)
 
             case let .detailLoaded(detail):
-                state.detail = detail
-                return .send(
-                    .timer(
-                        .configure(
-                            mode: detail.mode,
-                            timerSeconds: detail.timerSeconds,
-                            timers: detail.timers
-                        )
-                    )
-                )
+                return applyDetail(detail, state: &state)
+
+            case .detailLoadFailed:
+                state.isLoadingDetail = false
+                guard state.pendingVoiceStart else { return .none }
+                state.pendingVoiceStart = false
+                return .send(.voice(.detailLoadFailed))
 
             case .appBecameActive:
                 guard !state.isReady else { return .none }
@@ -269,6 +262,10 @@ struct ExperimentSessionFeature {
                       !state.capture.isCapturingPhoto,
                       state.capture.capturedPhotoData == nil,
                       state.capture.videoPhase == .idle else { return .none }
+                guard state.detail != nil else {
+                    state.pendingVoiceStart = true
+                    return .send(.loadDetail)
+                }
                 return .merge(
                     .send(.capture(.cancelPhotoGesture)),
                     .send(.voice(.prepareRequested))
@@ -288,5 +285,35 @@ struct ExperimentSessionFeature {
                 return .none
             }
         }
+    }
+}
+
+private extension ExperimentSessionFeature {
+    func loadDetail(state: inout State) -> Effect<Action> {
+        guard !state.isLoadingDetail else { return .none }
+        state.isLoadingDetail = true
+        let experimentID = state.experimentID
+        return .run { send in
+            await timerCompletionNotificationClient.cancelForExperiment(experimentID)
+            guard let detail = try? await experimentClient.loadDetail(experimentID) else {
+                await send(.detailLoadFailed)
+                return
+            }
+            await send(.detailLoaded(detail))
+        }
+    }
+
+    func applyDetail(_ detail: ExperimentSessionDetail, state: inout State) -> Effect<Action> {
+        state.isLoadingDetail = false
+        state.detail = detail
+        state.voice.contextualStrings = detail.speechContextualStrings
+        let shouldStartVoice = state.pendingVoiceStart
+        state.pendingVoiceStart = false
+        return .concatenate(
+            .send(.timer(.configure(
+                mode: detail.mode, timerSeconds: detail.timerSeconds, timers: detail.timers
+            ))),
+            shouldStartVoice ? .send(.voiceStartRequested) : .none
+        )
     }
 }
