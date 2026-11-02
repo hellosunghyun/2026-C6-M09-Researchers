@@ -17,6 +17,14 @@ nonisolated enum ProtocolTermCategory: Int, CaseIterable, Equatable, Hashable, S
 nonisolated struct ProtocolReviewTerm: Identifiable, Equatable, Sendable {
     let id: UUID
     var value: String
+
+    static func comparisonKey(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scalars = trimmed.unicodeScalars.map { scalar in
+            (65...90).contains(scalar.value) ? UnicodeScalar(scalar.value + 32)! : scalar
+        }
+        return String(String.UnicodeScalarView(scalars))
+    }
 }
 
 @Reducer
@@ -84,9 +92,9 @@ struct ProtocolReviewFeature {
                 guard let category = state.inputCategory else { return .none }
                 let value = state.termInput.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !value.isEmpty else { return .none }
-                let key = Self.comparisonKey(value)
+                let key = ProtocolReviewTerm.comparisonKey(value)
                 let existing = state.terms.values.joined().contains {
-                    Self.comparisonKey($0.value) == key
+                    ProtocolReviewTerm.comparisonKey($0.value) == key
                 }
                 guard !existing else {
                     state.termError = "이미 추가된 항목이에요."
@@ -121,11 +129,4 @@ struct ProtocolReviewFeature {
         }
     }
 
-    private static func comparisonKey(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scalars = trimmed.unicodeScalars.map { scalar in
-            (65...90).contains(scalar.value) ? UnicodeScalar(scalar.value + 32)! : scalar
-        }
-        return String(String.UnicodeScalarView(scalars))
-    }
 }

@@ -8,6 +8,11 @@ nonisolated enum ProtocolSource: String, Equatable, Sendable {
     case recent
 }
 
+nonisolated enum ProtocolAnalysisPhase: Equatable, Sendable {
+    case reading
+    case extractingTerms
+}
+
 @Reducer
 struct ProtocolRegistrationFeature {
     @ObservableState
@@ -19,8 +24,11 @@ struct ProtocolRegistrationFeature {
         var importedPhotos: [ImportedProtocolInput] = []
         var importedFile: ImportedProtocolInput?
         var analysisID: UUID?
+        var analysisPhase = ProtocolAnalysisPhase.reading
         var analysisCancellationRequested = false
         var analysisResults: [UUID: ProtocolAnalysisItem] = [:]
+        /// 분석에 성공한 문서별 추출 용어입니다. 추출에 실패한 문서는 값이 없습니다.
+        var analysisTerms: [UUID: ProtocolExtractedTerms] = [:]
         var analysisFailed = false
 
         var selectedInputs: [ImportedProtocolInput] {
@@ -43,6 +51,34 @@ struct ProtocolRegistrationFeature {
                 return item
             }
         }
+
+        var termExtractionFailed: Bool {
+            successfulResults.contains { analysisTerms[$0.id] == nil }
+        }
+
+        /// 현재 선택된 문서 중 분석에 성공한 문서의 용어를 분류별로 합칩니다.
+        /// 같은 용어는 먼저 나온 분류에만 남깁니다.
+        var extractedTerms: [ProtocolTermCategory: [String]] {
+            var seen = Set<String>()
+            var merged: [ProtocolTermCategory: [String]] = [:]
+            for item in successfulResults {
+                guard let terms = analysisTerms[item.id] else { continue }
+                let groups: [(ProtocolTermCategory, [String])] = [
+                    (.materials, terms.materials), (.samples, terms.samples),
+                    (.glossary, terms.glossaryTerms), (.units, terms.units)
+                ]
+                for (category, values) in groups {
+                    for value in values {
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty,
+                              seen.insert(ProtocolReviewTerm.comparisonKey(trimmed)).inserted
+                        else { continue }
+                        merged[category, default: []].append(trimmed)
+                    }
+                }
+            }
+            return merged
+        }
     }
 
     enum Action: Equatable {
@@ -60,8 +96,9 @@ struct ProtocolRegistrationFeature {
         case removePhoto(UUID)
         case removeFile
         case startAnalysis(UUID)
+        case analysisPhaseChanged(UUID, ProtocolAnalysisPhase)
         case cancelAnalysis
-        case analysisFinished(UUID, [ProtocolAnalysisItem]?)
+        case analysisFinished(UUID, [ProtocolAnalysisItem]?, [UUID: ProtocolExtractedTerms])
         case showReview
         case clearImportedInputs
     }
@@ -142,7 +179,7 @@ struct ProtocolRegistrationFeature {
                 return .none
 
             case let .fileImported(input):
-                if let id = state.importedFile?.id { state.analysisResults[id] = nil }
+                if let id = state.importedFile?.id { state.clearAnalysis(for: id) }
                 state.importedFile = input
                 return .none
 
@@ -151,19 +188,27 @@ struct ProtocolRegistrationFeature {
                     return .none
                 }
                 state.importedPhotos.remove(at: index)
-                state.analysisResults[id] = nil
+                state.clearAnalysis(for: id)
                 return .none
 
             case .removeFile:
-                if let id = state.importedFile?.id { state.analysisResults[id] = nil }
+                if let id = state.importedFile?.id { state.clearAnalysis(for: id) }
                 state.importedFile = nil
                 return .none
 
             case let .startAnalysis(id):
                 guard state.analysisID == nil, !state.pendingInputs.isEmpty else { return .none }
                 state.analysisID = id
+                state.analysisPhase = .reading
                 state.analysisCancellationRequested = false
                 state.analysisFailed = false
+                return .none
+
+            case let .analysisPhaseChanged(id, phase):
+                guard state.analysisID == id, !state.analysisCancellationRequested else {
+                    return .none
+                }
+                state.analysisPhase = phase
                 return .none
 
             case .cancelAnalysis:
@@ -171,9 +216,10 @@ struct ProtocolRegistrationFeature {
                 state.analysisCancellationRequested = true
                 return .none
 
-            case let .analysisFinished(id, items):
+            case let .analysisFinished(id, items, terms):
                 guard state.analysisID == id else { return .none }
                 state.analysisID = nil
+                state.analysisPhase = .reading
                 if state.analysisCancellationRequested {
                     state.analysisCancellationRequested = false
                     return .none
@@ -182,7 +228,10 @@ struct ProtocolRegistrationFeature {
                     state.analysisFailed = true
                     return .none
                 }
-                for item in items { state.analysisResults[item.id] = item }
+                for item in items {
+                    state.analysisResults[item.id] = item
+                    state.analysisTerms[item.id] = terms[item.id]
+                }
                 state.analysisFailed = items.contains {
                     if case .failure = $0.outcome { return true }
                     return false
@@ -196,5 +245,12 @@ struct ProtocolRegistrationFeature {
                 return .none
             }
         }
+    }
+}
+
+private extension ProtocolRegistrationFeature.State {
+    mutating func clearAnalysis(for id: UUID) {
+        analysisResults[id] = nil
+        analysisTerms[id] = nil
     }
 }

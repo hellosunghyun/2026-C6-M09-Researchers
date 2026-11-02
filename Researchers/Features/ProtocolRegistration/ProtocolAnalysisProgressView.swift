@@ -2,8 +2,17 @@ import LabcordDesignSystem
 import SwiftUI
 
 struct ProtocolAnalysisProgressView: View {
+    let phase: ProtocolAnalysisPhase
     let isCancelling: Bool
     let onCancel: () -> Void
+
+    private var statusText: String {
+        if isCancelling { return "분석 취소 중..." }
+        switch phase {
+        case .reading: return "프로토콜을 읽고 있어요"
+        case .extractingTerms: return "타이머와 용어를 찾고 있어요"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +42,7 @@ struct ProtocolAnalysisProgressView: View {
                     .multilineTextAlignment(.center)
                     .padding(.top, 32)
 
-                    Text(isCancelling ? "분석 취소 중..." : "프로토콜을 읽고 있어요")
+                    Text(statusText)
                         .typography(Typography.calloutSemiBold)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)

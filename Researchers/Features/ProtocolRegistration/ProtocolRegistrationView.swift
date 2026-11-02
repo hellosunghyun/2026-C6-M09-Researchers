@@ -18,6 +18,7 @@ struct ProtocolRegistrationView: View {
     @State private var showExitConfirmation = false
     @State private var skipAfterCancellation = false
     @Dependency(\.protocolAnalysisClient) private var analysisClient
+    @Dependency(\.protocolTermClient) private var termClient
 
     var body: some View {
         VStack(spacing: 0) {
@@ -123,7 +124,10 @@ struct ProtocolRegistrationView: View {
         }
         .overlay {
             if store.analysisID != nil {
-                ProtocolAnalysisProgressView(isCancelling: store.analysisCancellationRequested) {
+                ProtocolAnalysisProgressView(
+                    phase: store.analysisPhase,
+                    isCancelling: store.analysisCancellationRequested
+                ) {
                     showSkipConfirmation = true
                 }
                 .background(Color(
@@ -222,7 +226,13 @@ private extension ProtocolRegistrationView {
         if store.successfulResults.contains(where: \.hasWarnings) {
             messages.append("일부 내용을 읽지 못했을 수 있어요.")
         }
-        messages.append("타이머를 확인하고 용어를 직접 입력해 주세요.")
+        if store.termExtractionFailed {
+            messages.append("일부 파일에서 용어를 추출하지 못했어요. 직접 입력해 주세요.")
+        } else if store.extractedTerms.isEmpty {
+            messages.append("타이머를 확인하고 용어를 직접 입력해 주세요.")
+        } else {
+            messages.append("추출한 타이머와 용어를 확인하고 필요하면 수정해 주세요.")
+        }
         return messages.joined(separator: " ")
     }
 
@@ -240,7 +250,15 @@ private extension ProtocolRegistrationView {
             } catch {
                 results = nil
             }
-            store.send(.analysisFinished(id, results))
+            var terms: [UUID: ProtocolExtractedTerms] = [:]
+            if let results, !Task.isCancelled {
+                store.send(.analysisPhaseChanged(id, .extractingTerms))
+                for item in results {
+                    guard !Task.isCancelled, let text = item.extractedText else { continue }
+                    terms[item.id] = try? await termClient.extract(text)
+                }
+            }
+            store.send(.analysisFinished(id, results, terms))
             analysisTask = nil
             if skipAfterCancellation {
                 skipAfterCancellation = false

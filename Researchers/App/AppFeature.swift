@@ -126,9 +126,12 @@ struct AppFeature {
                     guard let text = item.extractedText else { return [] }
                     return ProtocolTimerExtractor.extract(from: text)
                 }
+                let terms = registration.extractedTerms.mapValues { values in
+                    values.map { ProtocolReviewTerm(id: uuid(), value: $0) }
+                }
                 state.reviewRegistrationID = id
                 state.path.append(.review(ProtocolReviewFeature.State(
-                    title: "", timerSeconds: seconds, terms: [:]
+                    title: "", timerSeconds: seconds, terms: terms
                 )))
                 return .none
 
