@@ -90,6 +90,13 @@ private struct SetupSmallChip: View {
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            chip.fixedSize()
+            chip
+        }
+    }
+
+    private var chip: some View {
         ChipSurface(
             size: .small, visualStyle: .solid, emphasis: .weak,
             isSelected: true, isDisabled: !isEnabled
@@ -157,7 +164,7 @@ private struct ChipFlowLayout: Layout {
                 subviews[index].place(
                     at: CGPoint(x: currentX, y: currentY + (rowHeight - size.height) / 2),
                     anchor: .topLeading,
-                    proposal: ProposedViewSize(size)
+                    proposal: ProposedViewSize(width: size.width, height: nil)
                 )
                 currentX += size.width + spacing
             }
@@ -186,12 +193,11 @@ private struct ChipFlowLayout: Layout {
     private func measuredSize(for subview: LayoutSubview, maxWidth: CGFloat) -> CGSize {
         let intrinsicSize = subview.sizeThatFits(.unspecified)
         guard maxWidth.isFinite, maxWidth > 0, intrinsicSize.width > maxWidth else {
-            return intrinsicSize
+            return CGSize(width: ceil(intrinsicSize.width), height: ceil(intrinsicSize.height))
         }
 
-        return subview.sizeThatFits(
-            ProposedViewSize(width: maxWidth, height: nil)
-        )
+        let wrappedSize = subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+        return CGSize(width: maxWidth, height: ceil(wrappedSize.height))
     }
 }
 

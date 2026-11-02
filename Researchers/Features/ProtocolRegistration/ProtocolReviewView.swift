@@ -52,6 +52,10 @@ struct ProtocolReviewView: View {
             NavigationPageTitle("프로토콜 분석 결과") {
                 store.send(.backTapped)
             }
+            .background {
+                Color("General/Background/Primary", bundle: LabcordDesignSystemResources.bundle)
+                    .ignoresSafeArea(edges: .top)
+            }
         }
         .sheet(item: $timerEditor) { editor in
             TimerSettingSheet(duration: $timerDraft) {
