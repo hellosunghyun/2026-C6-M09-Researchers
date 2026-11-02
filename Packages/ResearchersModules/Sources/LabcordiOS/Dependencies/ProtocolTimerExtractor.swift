@@ -3,7 +3,7 @@ import Foundation
 /// Extracts explicit durations in text order. Ambiguous formats are left for editing.
 nonisolated public enum ProtocolTimerExtractor {
     private static let units =
-        "(?:hours?|hrs?|hr|h|minutes?|mins?|min|seconds?|secs?|sec|s|시간|분|초)"
+        "(?:hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s|시간|분|초)"
     private static let number = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?"
     private static let rangePattern =
         "(?<![0-9.,:\\-])(\(number))\\s*(?:~|–|—|-|\\bto\\b)" +
@@ -174,7 +174,7 @@ nonisolated public enum ProtocolTimerExtractor {
     private static func multiplier(for unit: String) -> Int? {
         switch unit.lowercased() {
         case "시간", "h", "hr", "hrs", "hour", "hours": 3_600
-        case "분", "min", "mins", "minute", "minutes": 60
+        case "분", "m", "min", "mins", "minute", "minutes": 60
         case "초", "s", "sec", "secs", "second", "seconds": 1
         default: nil
         }
