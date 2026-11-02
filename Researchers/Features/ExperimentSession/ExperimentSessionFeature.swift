@@ -11,6 +11,7 @@ struct ExperimentSessionFeature {
         var detail: ExperimentSessionDetail?
         var isLoadingDetail = false
         var pendingVoiceStart = false
+        var pendingVoiceGestureAt: Date?
         var timer: SessionTimerFeature.State
 
         var permissions = SessionPermissionsFeature.State()
@@ -103,6 +104,7 @@ struct ExperimentSessionFeature {
                 state.isLoadingDetail = false
                 guard state.pendingVoiceStart else { return .none }
                 state.pendingVoiceStart = false
+                state.pendingVoiceGestureAt = nil
                 return .send(.voice(.detailLoadFailed))
 
             case .appBecameActive:
@@ -214,6 +216,7 @@ struct ExperimentSessionFeature {
                 return .send(.permissions(.accessFailed(kind)))
 
             case .capture(.delegate(.voiceRequested)):
+                state.pendingVoiceGestureAt = nil
                 return .send(.voiceStartRequested)
 
             case .capture(.delegate(.photoRequested)):
@@ -244,7 +247,9 @@ struct ExperimentSessionFeature {
                           state.capture.videoPhase == .idle,
                           detectedAt.timeIntervalSinceNow > -0.5 else { return .none }
                     switch state.voice.phase {
-                    case .hidden: return .send(.voiceStartRequested)
+                    case .hidden:
+                        state.pendingVoiceGestureAt = detectedAt
+                        return .send(.voiceStartRequested)
                     case .recording: return .send(.voice(.stopRequested))
                     case .starting, .stopping, .finished: return .none
                     }
@@ -266,6 +271,7 @@ struct ExperimentSessionFeature {
                     state.pendingVoiceStart = true
                     return .send(.loadDetail)
                 }
+                state.pendingVoiceGestureAt = nil
                 return .merge(
                     .send(.capture(.cancelPhotoGesture)),
                     .send(.voice(.prepareRequested))
@@ -307,8 +313,12 @@ private extension ExperimentSessionFeature {
         state.isLoadingDetail = false
         state.detail = detail
         state.voice.contextualStrings = detail.speechContextualStrings
-        let shouldStartVoice = state.pendingVoiceStart
+        let gestureIsFresh = state.pendingVoiceGestureAt.map {
+            $0.timeIntervalSince(now) > -0.5
+        } ?? true
+        let shouldStartVoice = state.pendingVoiceStart && gestureIsFresh
         state.pendingVoiceStart = false
+        state.pendingVoiceGestureAt = nil
         return .concatenate(
             .send(.timer(.configure(
                 mode: detail.mode, timerSeconds: detail.timerSeconds, timers: detail.timers

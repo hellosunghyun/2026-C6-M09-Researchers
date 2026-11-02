@@ -79,15 +79,11 @@ struct ProtocolRegistrationFeature {
             switch action {
             case .backTapped:
                 guard !state.importing, state.analysisID == nil else { return .none }
-                state.importedPhotos.forEach { $0.remove() }
-                state.importedFile?.remove()
                 state.importedPhotos = []
                 state.importedFile = nil
                 return .none
 
             case .clearImportedInputs:
-                state.importedPhotos.forEach { $0.remove() }
-                state.importedFile?.remove()
                 state.importedPhotos = []
                 state.importedFile = nil
                 return .none
@@ -114,8 +110,6 @@ struct ProtocolRegistrationFeature {
                 switch result {
                 case let .success(entry):
                     state.pendingID = nil
-                    state.importedPhotos.forEach { $0.remove() }
-                    state.importedFile?.remove()
                     state.importedPhotos = []
                     state.importedFile = nil
                     return .send(.saveSucceeded(entry))
@@ -149,7 +143,6 @@ struct ProtocolRegistrationFeature {
 
             case let .fileImported(input):
                 if let id = state.importedFile?.id { state.analysisResults[id] = nil }
-                state.importedFile?.remove()
                 state.importedFile = input
                 return .none
 
@@ -157,13 +150,12 @@ struct ProtocolRegistrationFeature {
                 guard let index = state.importedPhotos.firstIndex(where: { $0.id == id }) else {
                     return .none
                 }
-                state.importedPhotos.remove(at: index).remove()
+                state.importedPhotos.remove(at: index)
                 state.analysisResults[id] = nil
                 return .none
 
             case .removeFile:
                 if let id = state.importedFile?.id { state.analysisResults[id] = nil }
-                state.importedFile?.remove()
                 state.importedFile = nil
                 return .none
 

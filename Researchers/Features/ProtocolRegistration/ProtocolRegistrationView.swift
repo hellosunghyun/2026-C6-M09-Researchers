@@ -189,11 +189,13 @@ struct ProtocolRegistrationView: View {
     }
 
     private func analyze() {
-        let inputs = store.pendingInputs.map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
-        guard !inputs.isEmpty else { return }
+        let retainedInputs = store.pendingInputs
+        guard !retainedInputs.isEmpty else { return }
+        let inputs = retainedInputs.map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
         let id = UUID()
         store.send(.startAnalysis(id))
         analysisTask = Task {
+            defer { withExtendedLifetime(retainedInputs) {} }
             let results: [ProtocolAnalysisItem]?
             do {
                 results = try await analysisClient.parse(inputs, nil)

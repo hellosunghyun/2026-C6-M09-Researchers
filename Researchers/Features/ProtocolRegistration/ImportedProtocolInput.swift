@@ -6,9 +6,24 @@ import UIKit
 import UniformTypeIdentifiers
 
 nonisolated struct ImportedProtocolInput: Identifiable, Equatable, Sendable, Transferable {
+    // Matches the pinned OmniParser default input safety limit, not a product limit.
+    private static let maximumInputBytes = 100 * 1024 * 1024
+    private static let minimumFreeBytes: Int64 = 100 * 1024 * 1024
     let id: UUID
     let url: URL
     let name: String
+    private let ownership: ImportedInputOwnership
+
+    private init(id: UUID, url: URL, name: String) {
+        self.id = id
+        self.url = url
+        self.name = name
+        self.ownership = ImportedInputOwnership(url: url)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.url == rhs.url && lhs.name == rhs.name
+    }
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .image) { received in
@@ -36,7 +51,28 @@ nonisolated struct ImportedProtocolInput: Identifiable, Equatable, Sendable, Tra
         let scoped = useSecurityScope && source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         do {
-            try FileManager.default.copyItem(at: source, to: target)
+            let reader = try FileHandle(forReadingFrom: source)
+            defer { try? reader.close() }
+            guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let writer = try FileHandle(forWritingTo: target)
+            defer { try? writer.close() }
+            var totalBytes = 0
+            while let data = try reader.read(upToCount: 64 * 1024), !data.isEmpty {
+                totalBytes += data.count
+                guard totalBytes <= maximumInputBytes else {
+                    throw CocoaError(.fileReadTooLarge)
+                }
+                let values = try target.resourceValues(
+                    forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+                )
+                if let available = values.volumeAvailableCapacityForImportantUsage,
+                   available < minimumFreeBytes + Int64(data.count) {
+                    throw CocoaError(.fileWriteOutOfSpace)
+                }
+                try writer.write(contentsOf: data)
+            }
         } catch {
             try? FileManager.default.removeItem(at: target)
             throw error
@@ -44,7 +80,16 @@ nonisolated struct ImportedProtocolInput: Identifiable, Equatable, Sendable, Tra
         return Self(id: id, url: target, name: source.lastPathComponent)
     }
 
-    func remove() {
+}
+
+private nonisolated final class ImportedInputOwnership: @unchecked Sendable {
+    private let url: URL
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    deinit {
         try? FileManager.default.removeItem(at: url)
     }
 }
