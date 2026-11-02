@@ -13,7 +13,19 @@ nonisolated public enum ProtocolTimerExtractor {
         "(?:\(horizontalSpace)\(number)\(horizontalSpace)\(units)){0,2}" +
         "\(horizontalSpace)(?:~|〜|–|—|-|\\bto\\b|에서|부터)\(horizontalSpace)" +
         "\(number)\(horizontalSpace)\(units)" +
-        "(?:\(horizontalSpace)\(number)\(horizontalSpace)\(units)){0,2}"
+        "(?:\(horizontalSpace)\(number)\(horizontalSpace)\(units)){0,2}(?![A-Za-z])"
+    private static let durationPattern =
+        "(?<![0-9.,:])\(number)\(horizontalSpace)\(units)" +
+        "(?:\(horizontalSpace)\(number)\(horizontalSpace)\(units)){0,2}(?![A-Za-z])"
+    private static let conditionPatterns = [
+        "\(durationPattern)\(horizontalSpace)(?:이상|이하|이내|미만|초과|정도|가량|내외|전후)",
+        "(?<![가-힣A-Za-z])(?:최소|최대|적어도|길어도|약)" +
+            "\(horizontalSpace)\(durationPattern)",
+        "\\b(?:at least|at most|up to|more than|less than|no more than|no less than|" +
+            "minimum(?: of)?|maximum(?: of)?|about|approximately|around)" +
+            "[ \\t]+\(durationPattern)",
+        "\(durationPattern)[ \\t]+(?:or more|or less|or longer|or shorter)\\b"
+    ]
     private static let physicalUnitPattern =
         "\(number)\(horizontalSpace)[A-Za-zµμ]+(?:\\^?[+−-]?[0-9]+)?" +
         "\(horizontalSpace)(?:[/·⋅*]\(horizontalSpace)[A-Za-zµμ]+" +
@@ -25,14 +37,13 @@ nonisolated public enum ProtocolTimerExtractor {
     public static func extract(from text: String) -> [Int] {
         // 전각 숫자와 ㎜·㎡·⁻¹ 등을 비교 가능한 표기로 바꾸되 원본 문서는 수정하지 않습니다.
         let text = text.precomposedStringWithCompatibilityMapping
-        guard let itemRegex = regex(itemPattern), let rangeRegex = regex(rangePattern),
-              let physicalRegex = regex(physicalUnitPattern),
+        guard let itemRegex = regex(itemPattern), let physicalRegex = regex(physicalUnitPattern),
               let clockRegex = regex(clockPattern) else { return [] }
         let fullRange = NSRange(text.startIndex..., in: text)
         let clocks = clockRegex.matches(in: text, range: fullRange)
         // 범위의 양 끝과 복합 물리 단위를 개별 고정 타이머로 만들지 않습니다.
-        let excluded = (rangeRegex.matches(in: text, range: fullRange)
-            + physicalRegex.matches(in: text, range: fullRange) + clocks).map(\.range)
+        let physical = physicalRegex.matches(in: text, range: fullRange).map(\.range)
+        let excluded = reviewRanges(text, physical: physical) + physical + clocks.map(\.range)
         var tokens = itemRegex.matches(in: text, range: fullRange).compactMap { match -> Token? in
             guard !excluded.contains(where: { NSIntersectionRange($0, match.range).length > 0 }),
                   !isFalsePositive(text, range: match.range),
@@ -52,6 +63,40 @@ nonisolated public enum ProtocolTimerExtractor {
             )
         }
         return combinedDurations(tokens.sorted { $0.range.location < $1.range.location }, text)
+    }
+
+    /// 범위·상한·하한·근삿값은 원문을 확인해 타이머를 직접 정하도록 알립니다.
+    public static func needsManualReview(in text: String) -> Bool {
+        let text = text.precomposedStringWithCompatibilityMapping
+        guard let physicalRegex = regex(physicalUnitPattern) else { return false }
+        let fullRange = NSRange(text.startIndex..., in: text)
+        let physical = physicalRegex.matches(in: text, range: fullRange).map(\.range)
+        return !reviewRanges(text, physical: physical).isEmpty
+    }
+
+    private static func reviewRanges(_ text: String, physical: [NSRange]) -> [NSRange] {
+        let fullRange = NSRange(text.startIndex..., in: text)
+        guard let itemRegex = regex(itemPattern) else { return [] }
+        let patterns = [rangePattern] + conditionPatterns
+        return patterns.flatMap { pattern -> [NSRange] in
+            guard let expression = regex(pattern) else { return [] }
+            return expression.matches(in: text, range: fullRange).compactMap { match in
+                // 범위의 마지막 m 뒤에 /s·제곱 등이 이어지면 시간 범위가 아닙니다.
+                let physicalOverlap = physical.contains {
+                    NSIntersectionRange($0, match.range).length > 0
+                        && NSIntersectionRange($0, match.range) != $0
+                }
+                guard !physicalOverlap else { return nil }
+                let items = itemRegex.matches(in: text, range: match.range)
+                guard let last = items.last else { return nil }
+                let durationRange = NSRange(
+                    location: match.range.location,
+                    length: NSMaxRange(last.range) - match.range.location
+                )
+                guard !isFalsePositive(text, range: durationRange) else { return nil }
+                return match.range
+            }
+        }
     }
 
     private struct Token {
@@ -114,6 +159,9 @@ nonisolated public enum ProtocolTimerExtractor {
 
     private static func isFalsePositive(_ text: String, range: NSRange) -> Bool {
         let source = text as NSString
+        // 단일 대문자 M·H·S는 몰농도·헨리·지멘스 등의 단위와 구분합니다.
+        let matched = source.substring(with: range)
+        if let last = matched.last, ["M", "H", "S"].contains(last) { return true }
         if range.location > 0 {
             let previous = source.substring(with: NSRange(location: range.location - 1, length: 1))
             if previous == "-" || previous == "−" || previous == "/" { return true }
