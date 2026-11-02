@@ -15,6 +15,38 @@ nonisolated struct R117NativeCandidatePool: Sendable {
     let rawCandidates: [R117NativeRawCandidate]
     let nativeOrder: [String]
     let guardedOrder: [String]
+
+    static func records(
+        merged: [MergedCandidate], scalars: [Unicode.Scalar], language: String
+    ) throws -> (raw: [R117NativeRawCandidate], cached: [CachedCandidate]) {
+        var raw: [R117NativeRawCandidate] = []
+        var cached: [CachedCandidate] = []
+        raw.reserveCapacity(merged.count)
+        cached.reserveCapacity(merged.count)
+        for candidate in merged {
+            guard candidate.start >= 0, candidate.end > candidate.start,
+                  candidate.end <= scalars.count, candidate.score.isFinite else {
+                throw R117NativeError.invalidPrediction
+            }
+            let norm = HintNorm.norm(TermHintDecoder.sliceStr(
+                scalars, candidate.start, candidate.end
+            ))
+            let decision = AdmissionDecision.decide(AdmissionInput(
+                chars: scalars, language: language, start: candidate.start, end: candidate.end,
+                score: candidate.score, noFilter: candidate.noFilter, norm: norm
+            ))
+            let score = Double(candidate.score)
+            raw.append(R117NativeRawCandidate(
+                start: candidate.start, end: candidate.end, score: score,
+                kind: candidate.kind, tier: candidate.tier, retained: decision.retained
+            ))
+            cached.append(CachedCandidate(
+                start: candidate.start, end: candidate.end, score: score,
+                admitted: decision.admitted, norm: norm
+            ))
+        }
+        return (raw, cached)
+    }
 }
 
 /// Legacy decoder의 가변 설정은 모든 인스턴스가 같은 worker에서 직렬 실행합니다.
@@ -120,55 +152,23 @@ nonisolated private final class R117NativePipeline {
         try Task.checkCancellation()
         guard !actual.isEmpty || text.isEmpty else { throw R117NativeError.invalidPrediction }
         let scalars = Array(text.unicodeScalars)
-        let raw = try rawCandidates(scalars: scalars, language: language)
-        let candidates = TermHintDecoder.lastMerged.map { candidate in
-            let norm = HintNorm.norm(TermHintDecoder.sliceStr(
-                scalars, candidate.start, candidate.end
-            ))
-            let decision = AdmissionDecision.decide(AdmissionInput(
-                chars: scalars, language: language, start: candidate.start, end: candidate.end,
-                score: candidate.score, noFilter: candidate.noFilter, norm: norm
-            ))
-            return CachedCandidate(
-                start: candidate.start, end: candidate.end, score: Double(candidate.score),
-                admitted: decision.admitted, norm: norm
-            )
-        }
+        let records = try R117NativeCandidatePool.records(
+            merged: TermHintDecoder.lastMerged, scalars: scalars, language: language
+        )
         let (ranges, _) = priority.ranges(in: text)
         let native = try priority.emitFusion(
-            candidates, text: text, localLimit: 100, ranges: ranges
+            records.cached, text: text, localLimit: 100, ranges: ranges
         )
         guard native.map(\.text) == actual.map(\.text) else {
             throw R117NativeError.invalidPrediction
         }
         let guarded = try DocumentFrequencyRanking.hints(
-            candidates: candidates, fusion: native, text: text, limit: 100
+            candidates: records.cached, fusion: native, text: text, limit: 100
         )
         try Task.checkCancellation()
         return R117NativeCandidatePool(
-            rawCandidates: raw, nativeOrder: native.map(\.text), guardedOrder: guarded.map(\.text)
+            rawCandidates: records.raw, nativeOrder: native.map(\.text),
+            guardedOrder: guarded.map(\.text)
         )
-    }
-
-    private func rawCandidates(
-        scalars: [Unicode.Scalar], language: String
-    ) throws -> [R117NativeRawCandidate] {
-        try TermHintDecoder.lastMerged.map { candidate in
-            guard candidate.start >= 0, candidate.end > candidate.start,
-                  candidate.end <= scalars.count, candidate.score.isFinite else {
-                throw R117NativeError.invalidPrediction
-            }
-            let norm = HintNorm.norm(TermHintDecoder.sliceStr(
-                scalars, candidate.start, candidate.end
-            ))
-            let decision = AdmissionDecision.decide(AdmissionInput(
-                chars: scalars, language: language, start: candidate.start, end: candidate.end,
-                score: candidate.score, noFilter: candidate.noFilter, norm: norm
-            ))
-            return R117NativeRawCandidate(
-                start: candidate.start, end: candidate.end, score: Double(candidate.score),
-                kind: candidate.kind, tier: candidate.tier, retained: decision.retained
-            )
-        }
     }
 }
