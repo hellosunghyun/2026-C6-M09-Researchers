@@ -21,6 +21,133 @@ struct ProtocolRegistrationView: View {
     @Dependency(\.protocolAnalysisJobManager) private var jobManager
 
     var body: some View {
+        Group {
+            if store.analysisID != nil {
+                ProtocolAnalysisProgressView(
+                    phase: store.analysisPhase,
+                    inputName: store.analysisInput?.name,
+                    inputNumber: store.analysisInputNumber,
+                    inputCount: store.selectedInputs.count,
+                    startedAt: store.analysisStartedAt,
+                    isCancelling: store.analysisCancellationRequested,
+                    notice: store.analysisMessage
+                ) {
+                    showSkipConfirmation = true
+                }
+                .background(Color(
+                    "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
+                ))
+            } else if store.showsAnalysisCompletion {
+                ProtocolAnalysisCompletionView(onReview: requestReview)
+                    .background(Color(
+                        "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
+                    ))
+            } else {
+                setupContent
+            }
+        }
+        .alert("실험을 저장하지 못했어요", isPresented: Binding(
+            get: { store.hasFailed },
+            set: { if !$0 { store.send(.dismissFailure) } }
+        )) {
+            Button("재시도") { store.send(.retryTapped) }
+            Button("취소", role: .cancel) { store.send(.dismissFailure) }
+        } message: {
+            Text("실험은 등록되지 않았어요. 다시 시도해 주세요.")
+        }
+        .alert("이전 분석을 불러오지 못했어요", isPresented: $recoveryFailed) {
+            Button("확인", role: .cancel) { }
+        } message: {
+            Text("보관한 파일은 지우지 않았어요. 나중에 다시 시도하거나 파일을 다시 선택해 주세요.")
+        }
+        .alert("파일을 가져오지 못했어요", isPresented: $importFailed) {
+            Button("확인", role: .cancel) { }
+        } message: {
+            Text("파일을 다시 선택해 주세요.")
+        }
+        .alert("타이머와 용어를 확인해 주세요", isPresented: $showReviewConfirmation) {
+            Button("확인") { store.send(.showReview) }
+            Button("취소", role: .cancel) { }
+        } message: {
+            Text(reviewConfirmationMessage)
+        }
+        .alert("분석을 건너뛸까요?", isPresented: $showSkipConfirmation) {
+            Button("건너뛰기", role: .destructive) {
+                if store.analysisID != nil {
+                    skipAfterCancellation = true
+                    store.send(.cancelAnalysis)
+                    if let id = store.analysisID {
+                        Task { await jobManager.cancel(id: id) }
+                    }
+                } else {
+                    store.send(.skipTapped)
+                }
+            }
+            Button("취소", role: .cancel) { }
+        } message: {
+            Text("분석 결과는 초기화되고 프로토콜 없이 실험을 시작해요.")
+        }
+        .alert("실험 등록을 종료할까요?", isPresented: $showExitConfirmation) {
+            Button("실험 등록 종료", role: .destructive) { store.send(.backTapped) }
+            Button("취소", role: .cancel) { }
+        } message: {
+            Text("이 화면을 나가면 분석 결과가 초기화돼요.")
+        }
+        .photosPicker(
+            isPresented: $photoPickerPresented,
+            selection: $photoSelection,
+            matching: .images
+        )
+        .onChange(of: photoSelection) { _, selection in
+            importPhotos(selection)
+        }
+        .fileImporter(
+            isPresented: $filePickerPresented,
+            allowedContentTypes: protocolFileTypes
+        ) { result in
+            switch result {
+            case let .success(url): importFile(url)
+            case .failure: importFailed = true
+            }
+        }
+        .task {
+            do {
+                if let saved = try await jobManager.restore() {
+                    store.send(.restoreAnalysisJob(saved))
+                }
+            } catch {
+                recoveryFailed = true
+            }
+            for await update in await jobManager.updates() {
+                guard !Task.isCancelled else { break }
+                store.send(.analysisJobUpdated(update))
+                if update.status == .cancelled, skipAfterCancellation {
+                    skipAfterCancellation = false
+                    store.send(.skipTapped)
+                }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { Task { await jobManager.enteredBackground() } }
+        }
+        .navigationBarBackButtonHidden()
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if store.analysisID == nil {
+                NavigationPageTitle(store.showsAnalysisCompletion ? "" : "실험 등록") {
+                    if store.selectedInputs.isEmpty {
+                        store.send(.backTapped)
+                    } else {
+                        showExitConfirmation = true
+                    }
+                }
+                .disabled(store.isSaving || store.importing || store.analysisID != nil)
+                .accessibilityIdentifier("entry-back")
+            }
+        }
+    }
+
+    private var setupContent: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 8) {
@@ -126,130 +253,6 @@ struct ProtocolRegistrationView: View {
                 )
             }
             .padding(.horizontal, 16)
-        }
-        .accessibilityHidden(store.analysisID != nil || store.showsAnalysisCompletion)
-        .allowsHitTesting(store.analysisID == nil && !store.showsAnalysisCompletion)
-        .overlay {
-            if store.analysisID != nil {
-                ProtocolAnalysisProgressView(
-                    phase: store.analysisPhase,
-                    inputName: store.analysisInput?.name,
-                    inputNumber: store.analysisInputNumber,
-                    inputCount: store.selectedInputs.count,
-                    startedAt: store.analysisStartedAt,
-                    isCancelling: store.analysisCancellationRequested,
-                    notice: store.analysisMessage
-                ) {
-                    showSkipConfirmation = true
-                }
-                .background(Color(
-                    "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
-                ))
-            } else if store.showsAnalysisCompletion {
-                ProtocolAnalysisCompletionView(onReview: requestReview)
-                    .background(Color(
-                        "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
-                    ))
-            }
-        }
-        .alert("실험을 저장하지 못했어요", isPresented: Binding(
-            get: { store.hasFailed },
-            set: { if !$0 { store.send(.dismissFailure) } }
-        )) {
-            Button("재시도") { store.send(.retryTapped) }
-            Button("취소", role: .cancel) { store.send(.dismissFailure) }
-        } message: {
-            Text("실험은 등록되지 않았어요. 다시 시도해 주세요.")
-        }
-        .alert("이전 분석을 불러오지 못했어요", isPresented: $recoveryFailed) {
-            Button("확인", role: .cancel) { }
-        } message: {
-            Text("보관한 파일은 지우지 않았어요. 나중에 다시 시도하거나 파일을 다시 선택해 주세요.")
-        }
-        .alert("파일을 가져오지 못했어요", isPresented: $importFailed) {
-            Button("확인", role: .cancel) { }
-        } message: {
-            Text("파일을 다시 선택해 주세요.")
-        }
-        .alert("타이머와 용어를 확인해 주세요", isPresented: $showReviewConfirmation) {
-            Button("확인") { store.send(.showReview) }
-            Button("취소", role: .cancel) { }
-        } message: {
-            Text(reviewConfirmationMessage)
-        }
-        .alert("분석을 건너뛸까요?", isPresented: $showSkipConfirmation) {
-            Button("건너뛰기", role: .destructive) {
-                if store.analysisID != nil {
-                    skipAfterCancellation = true
-                    store.send(.cancelAnalysis)
-                    if let id = store.analysisID {
-                        Task { await jobManager.cancel(id: id) }
-                    }
-                } else {
-                    store.send(.skipTapped)
-                }
-            }
-            Button("취소", role: .cancel) { }
-        } message: {
-            Text("분석 결과는 초기화되고 프로토콜 없이 실험을 시작해요.")
-        }
-        .alert("실험 등록을 종료할까요?", isPresented: $showExitConfirmation) {
-            Button("실험 등록 종료", role: .destructive) { store.send(.backTapped) }
-            Button("취소", role: .cancel) { }
-        } message: {
-            Text("이 화면을 나가면 분석 결과가 초기화돼요.")
-        }
-        .photosPicker(
-            isPresented: $photoPickerPresented,
-            selection: $photoSelection,
-            matching: .images
-        )
-        .onChange(of: photoSelection) { _, selection in
-            importPhotos(selection)
-        }
-        .fileImporter(
-            isPresented: $filePickerPresented,
-            allowedContentTypes: protocolFileTypes
-        ) { result in
-            switch result {
-            case let .success(url): importFile(url)
-            case .failure: importFailed = true
-            }
-        }
-        .task {
-            do {
-                if let saved = try await jobManager.restore() {
-                    store.send(.restoreAnalysisJob(saved))
-                }
-            } catch {
-                recoveryFailed = true
-            }
-            for await update in await jobManager.updates() {
-                guard !Task.isCancelled else { break }
-                store.send(.analysisJobUpdated(update))
-                if update.status == .cancelled, skipAfterCancellation {
-                    skipAfterCancellation = false
-                    store.send(.skipTapped)
-                }
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background { Task { await jobManager.enteredBackground() } }
-        }
-        .navigationBarBackButtonHidden()
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if store.analysisID == nil {
-                NavigationPageTitle(store.showsAnalysisCompletion ? "" : "실험 등록") {
-                    if store.selectedInputs.isEmpty {
-                        store.send(.backTapped)
-                    } else {
-                        showExitConfirmation = true
-                    }
-                }
-                .disabled(store.isSaving || store.importing || store.analysisID != nil)
-                .accessibilityIdentifier("entry-back")
-            }
         }
     }
 
