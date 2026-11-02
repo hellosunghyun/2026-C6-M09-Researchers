@@ -40,19 +40,17 @@ struct ProtocolReviewView: View {
                 .buttonStyle(.labcord(.primary, size: .large))
                 .disabled(!store.titleValid || store.hasUncommittedTerm)
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
             .background(Color(
                 "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
             ))
         }
-        .navigationTitle("프로토콜 분석 결과")
-        .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("뒤로 가기", systemImage: "chevron.backward") {
-                    store.send(.backTapped)
-                }
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            NavigationPageTitle("프로토콜 분석 결과") {
+                store.send(.backTapped)
             }
         }
         .sheet(item: $timerEditor) { editor in

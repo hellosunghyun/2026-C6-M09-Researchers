@@ -58,10 +58,9 @@ public struct ChipGroup<Item: Identifiable>: View where Item.ID: Hashable {
                     HStack(spacing: LayoutTokens.spacing4) {
                         IconArtwork(icon: .plus, size: 16, relativeTo: .subheadline)
                         Text("추가")
-                            .foregroundStyle(Color(.General.Label.secondary))
                     }
                 }
-                .buttonStyle(.labcord(.secondary, size: .small))
+                .buttonStyle(.labcord(.accent, size: .small))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -86,9 +85,13 @@ public struct ChipGroup<Item: Identifiable>: View where Item.ID: Hashable {
 private struct SetupSmallChip: View {
     let label: String
     let onDismiss: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        HStack(spacing: LayoutTokens.spacing4) {
+        ChipSurface(
+            size: .small, visualStyle: .solid, emphasis: .weak,
+            isSelected: true, isDisabled: !isEnabled
+        ) {
             Text(label)
                 .typography(Typography.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
@@ -99,12 +102,6 @@ private struct SetupSmallChip: View {
             .buttonStyle(PressFeedbackButtonStyle())
             .accessibilityLabel(Text("\(label) 제거"))
         }
-        .foregroundStyle(Color(.General.Label.brand))
-        .padding(.horizontal, LayoutTokens.spacing12)
-        .padding(.vertical, 7)
-        .frame(minHeight: 34)
-        .background(Color(.General.Fill.selected), in: Capsule())
-        .contentShape(Capsule())
     }
 }
 

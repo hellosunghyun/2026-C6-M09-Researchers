@@ -64,7 +64,7 @@ struct ProtocolRegistrationView: View {
                 }
                 .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
+                .padding(.top, 16)
             }
 
             VStack(spacing: 8) {
@@ -103,7 +103,7 @@ struct ProtocolRegistrationView: View {
                             EntryLoadingIndicator()
                         }
                         Text(store.isSaving ? "실험을 저장하고 있어요" : "프로토콜 없이 진행")
-                            .font(.caption)
+                            .typography(Typography.callout)
                     }
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
@@ -120,7 +120,6 @@ struct ProtocolRegistrationView: View {
                 )
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 6)
         }
         .overlay {
             if store.analysisID != nil {
@@ -192,13 +191,11 @@ struct ProtocolRegistrationView: View {
             case .failure: importFailed = true
             }
         }
-        .navigationTitle("실험 등록")
-        .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
-        .toolbar(store.analysisID == nil ? .visible : .hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("뒤로 가기", systemImage: "chevron.backward") {
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if store.analysisID == nil {
+                NavigationPageTitle("실험 등록") {
                     if store.selectedInputs.isEmpty {
                         store.send(.backTapped)
                     } else {
@@ -232,6 +229,9 @@ private extension ProtocolRegistrationView {
             messages.append("타이머를 확인하고 용어를 직접 입력해 주세요.")
         } else {
             messages.append("추출한 타이머와 용어를 확인하고 필요하면 수정해 주세요.")
+        }
+        if store.analysisTerms.values.contains(where: \.usedFallback) {
+            messages.append("일부 용어를 자동 분류하지 못했어요. 분류를 확인해 주세요.")
         }
         return messages.joined(separator: " ")
     }
