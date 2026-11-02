@@ -49,14 +49,14 @@ struct ProtocolAnalysisProgressView: View {
             }
 
             VStack(spacing: 12) {
-                Text("분석을 취소하면 이전 화면으로 돌아가요.")
+                Text("분석을 건너뛰고, 실험을 시작할 수 있어요.")
                     .typography(Typography.subheadline)
                     .foregroundStyle(Color(
                         "General/Label/Secondary", bundle: LabcordDesignSystemResources.bundle
                     ))
                     .multilineTextAlignment(.center)
                 Button(action: onCancel) {
-                    Text(isCancelling ? "취소 중..." : "분석 취소")
+                    Text(isCancelling ? "취소 중..." : "분석 건너뛰기")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.labcord(.secondary, size: .large))

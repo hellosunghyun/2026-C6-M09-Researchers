@@ -14,6 +14,9 @@ struct ProtocolRegistrationView: View {
     @State private var importFailed = false
     @State private var analysisTask: Task<Void, Never>?
     @State private var showReviewConfirmation = false
+    @State private var showSkipConfirmation = false
+    @State private var showExitConfirmation = false
+    @State private var skipAfterCancellation = false
     @Dependency(\.protocolAnalysisClient) private var analysisClient
 
     var body: some View {
@@ -88,7 +91,11 @@ struct ProtocolRegistrationView: View {
                         .buttonStyle(.labcord(.accent, size: .medium))
                 }
                 Button {
-                    store.send(.skipTapped)
+                    if store.selectedInputs.isEmpty {
+                        store.send(.skipTapped)
+                    } else {
+                        showSkipConfirmation = true
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         if store.isSaving {
@@ -117,8 +124,7 @@ struct ProtocolRegistrationView: View {
         .overlay {
             if store.analysisID != nil {
                 ProtocolAnalysisProgressView(isCancelling: store.analysisCancellationRequested) {
-                    store.send(.cancelAnalysis)
-                    analysisTask?.cancel()
+                    showSkipConfirmation = true
                 }
                 .background(Color(
                     "General/Background/Primary", bundle: LabcordDesignSystemResources.bundle
@@ -145,6 +151,26 @@ struct ProtocolRegistrationView: View {
         } message: {
             Text(reviewConfirmationMessage)
         }
+        .alert("분석을 건너뛸까요?", isPresented: $showSkipConfirmation) {
+            Button("건너뛰기", role: .destructive) {
+                if store.analysisID != nil {
+                    skipAfterCancellation = true
+                    store.send(.cancelAnalysis)
+                    analysisTask?.cancel()
+                } else {
+                    store.send(.skipTapped)
+                }
+            }
+            Button("취소", role: .cancel) { }
+        } message: {
+            Text("분석 결과는 초기화되고 프로토콜 없이 실험을 시작해요.")
+        }
+        .alert("실험 등록을 종료할까요?", isPresented: $showExitConfirmation) {
+            Button("실험 등록 종료", role: .destructive) { store.send(.backTapped) }
+            Button("취소", role: .cancel) { }
+        } message: {
+            Text("이 화면을 나가면 분석 결과가 초기화돼요.")
+        }
         .photosPicker(
             isPresented: $photoPickerPresented,
             selection: $photoSelection,
@@ -169,7 +195,11 @@ struct ProtocolRegistrationView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("뒤로 가기", systemImage: "chevron.backward") {
-                    store.send(.backTapped)
+                    if store.selectedInputs.isEmpty {
+                        store.send(.backTapped)
+                    } else {
+                        showExitConfirmation = true
+                    }
                 }
                 .disabled(store.isSaving || store.importing || store.analysisID != nil)
                 .accessibilityIdentifier("entry-back")
@@ -177,11 +207,14 @@ struct ProtocolRegistrationView: View {
         }
     }
 
-    private var protocolFileTypes: [UTType] {
+}
+
+private extension ProtocolRegistrationView {
+    var protocolFileTypes: [UTType] {
         [.pdf] + ["xlsx", "docx"].compactMap { UTType(filenameExtension: $0) }
     }
 
-    private var reviewConfirmationMessage: String {
+    var reviewConfirmationMessage: String {
         var messages: [String] = []
         if !store.pendingInputs.isEmpty {
             messages.append("분석하지 못한 파일은 제외돼요.")
@@ -193,7 +226,7 @@ struct ProtocolRegistrationView: View {
         return messages.joined(separator: " ")
     }
 
-    private func analyze() {
+    func analyze() {
         let retainedInputs = store.pendingInputs
         guard !retainedInputs.isEmpty else { return }
         let inputs = retainedInputs.map { ProtocolAnalysisInput(id: $0.id, url: $0.url) }
@@ -209,10 +242,14 @@ struct ProtocolRegistrationView: View {
             }
             store.send(.analysisFinished(id, results))
             analysisTask = nil
+            if skipAfterCancellation {
+                skipAfterCancellation = false
+                store.send(.skipTapped)
+            }
         }
     }
 
-    private func importPhotos(_ selection: [PhotosPickerItem]) {
+    func importPhotos(_ selection: [PhotosPickerItem]) {
         guard !selection.isEmpty else { return }
         store.send(.importStarted)
         Task {
@@ -236,7 +273,7 @@ struct ProtocolRegistrationView: View {
         }
     }
 
-    private func importFile(_ url: URL) {
+    func importFile(_ url: URL) {
         store.send(.importStarted)
         Task {
             do {
