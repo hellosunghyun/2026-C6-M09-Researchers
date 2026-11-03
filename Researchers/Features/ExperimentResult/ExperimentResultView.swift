@@ -30,7 +30,7 @@ struct ExperimentResultView: View {
     }
 
     private func formattedDates(_ dates: [Date]) -> String {
-        "[" + dates.map(formattedDate).joined(separator: ", ") + "]"
+        "[\(dates.map(formattedDate).joined(separator: ", "))]"
     }
 
     private var detailText: String {

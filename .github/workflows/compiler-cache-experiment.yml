@@ -25,13 +25,15 @@ jobs:
         with:
           path: ${{ runner.temp }}/labcord-compilation-cache
           key: compilation-cache-experiment-${{ runner.os }}-${{ steps.toolchain.outputs.arch }}-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            compilation-cache-experiment-${{ runner.os }}-${{ steps.toolchain.outputs.arch }}-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
       - name: Build
         env:
           MODE: ${{ matrix.mode }}
         run: |
           args=()
           if [ "$MODE" = compilation-cache ]; then
-            args+=(COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$RUNNER_TEMP/labcord-compilation-cache")
+            args+=(COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES "COMPILATION_CACHE_CAS_PATH=$RUNNER_TEMP/labcord-compilation-cache")
           else
             args+=(COMPILATION_CACHE_ENABLE_CACHING=NO)
           fi
