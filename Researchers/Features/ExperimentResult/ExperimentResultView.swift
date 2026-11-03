@@ -118,3 +118,4 @@ struct ExperimentResultView: View {
         }
     )
 }
+// CI cache experiment: verify a Swift source change triggers incremental compilation.

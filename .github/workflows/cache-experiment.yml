@@ -32,6 +32,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/labcord-derived
           key: experiment-derived-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}-v1
+          restore-keys: |
+            experiment-derived-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
       - name: Build
         run: |
           /usr/bin/time -p xcodebuild build \
