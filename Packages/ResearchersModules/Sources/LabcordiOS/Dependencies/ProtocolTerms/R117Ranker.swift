@@ -72,8 +72,7 @@ nonisolated final class R117Ranker {
         )
     }
 
-    /// 문서 두 모델의 인코딩을 마친 뒤 선택한 후보 문맥 방식을 계산합니다.
-    /// 가변 모델 캐시 접근과 나머지 점수 계산은 호출 actor에 남깁니다.
+    /// 공유 문맥은 문서 모델과 함께 실행하고 가변 모델 캐시 접근은 호출 actor에 남깁니다.
     func scoresConcurrently(
         text: String,
         spans: [R117CandidateSpan],
@@ -86,9 +85,8 @@ nonisolated final class R117Ranker {
         try Task.checkCancellation()
         guard !spans.isEmpty else { throw R117RuntimeError.invalidCandidate }
         let contextMode = try contextMode.forCandidateCount(spans.count)
-        let documents = try await documentsConcurrently(text: text, observation: observation)
         let ranges = spans.map { $0.start..<$0.end }
-        let features = try await last2Concurrently(
+        let (documents, features) = try await encodingsConcurrently(
             text: text, ranges: ranges, mode: contextMode,
             observation: observation, progress: candidateProgress
         )
@@ -171,6 +169,49 @@ nonisolated final class R117Ranker {
 }
 
 nonisolated private extension R117Ranker {
+    func encodingsConcurrently(
+        text: String, ranges: [Range<Int>], mode: ContextMode,
+        isolation: isolated (any Actor)? = #isolation,
+        observation: ((String, Double) -> Void)?, progress: (@Sendable (Int, Int) -> Void)?
+    ) async throws -> (Documents, [[Float]]) {
+        let documents: Documents
+        let features: [[Float]]
+        if mode == .candidate {
+            documents = try await documentsConcurrently(text: text, observation: observation)
+            features = try await last2Concurrently(
+                text: text, ranges: ranges,
+                observation: observation, progress: progress
+            )
+        } else {
+            let documentStart = DispatchTime.now().uptimeNanoseconds
+            let prepared = try encoder.prepareDocuments(text: text)
+            let documentPreparation = Double(DispatchTime.now().uptimeNanoseconds
+                - documentStart) / 1_000_000_000
+            let sharedStart = DispatchTime.now().uptimeNanoseconds
+            let shared = try encoder.prepareShared(text: text)
+            let sharedPreparation = Double(DispatchTime.now().uptimeNanoseconds
+                - sharedStart) / 1_000_000_000
+            let sharedProgress = mode == .documentShared ? progress : nil
+            async let documentResult = R117Encoder.runDocuments(
+                original: prepared.original, teacher: prepared.teacher
+            )
+            async let sharedResult = R117Encoder.runShared(
+                prepared: shared, ranges: ranges, progress: sharedProgress
+            )
+            let (documentOutput, sharedOutput) = try await (documentResult, sharedResult)
+            try Task.checkCancellation()
+            documents = Documents(original: documentOutput.value.original,
+                                  teacher: documentOutput.value.teacher)
+            features = sharedOutput.value
+            observation?("document_encoder_preparation", documentPreparation)
+            observation?("shared_encoder_preparation", sharedPreparation)
+            observation?("document_encoders_concurrent",
+                         documentPreparation + documentOutput.duration)
+            observation?("teacher_last2_features", sharedPreparation + sharedOutput.duration)
+        }
+        return (documents, features)
+    }
+
     func documentsConcurrently(
         text: String, isolation: isolated (any Actor)? = #isolation,
         observation: ((String, Double) -> Void)?
@@ -189,24 +230,14 @@ nonisolated private extension R117Ranker {
     }
 
     func last2Concurrently(
-        text: String, ranges: [Range<Int>], mode: ContextMode,
+        text: String, ranges: [Range<Int>],
         isolation: isolated (any Actor)? = #isolation,
         observation: ((String, Double) -> Void)?, progress: (@Sendable (Int, Int) -> Void)?
     ) async throws -> [[Float]] {
         let started = observation == nil ? nil : DispatchTime.now().uptimeNanoseconds
-        let features: [[Float]]
-        switch mode {
-        case .candidate:
-            features = try await encoder.last2Concurrently(
-                text: text, spans: ranges, progress: progress
-            )
-        case .documentShared:
-            features = try await encoder.last2SharedConcurrently(
-                text: text, spans: ranges, progress: progress
-            )
-        case .documentSharedRefined:
-            features = try await encoder.last2SharedConcurrently(text: text, spans: ranges)
-        }
+        let features = try await encoder.last2Concurrently(
+            text: text, spans: ranges, progress: progress
+        )
         if let started {
             observation?("teacher_last2_features",
                          Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000_000)

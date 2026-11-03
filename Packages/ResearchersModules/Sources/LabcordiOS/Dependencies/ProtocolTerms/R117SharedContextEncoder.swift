@@ -5,15 +5,34 @@ import Foundation
 nonisolated enum R117SharedContextEncoder {
     typealias Prediction = @Sendable ([Int]) async throws -> [[Float]]
 
+    struct Prepared: Sendable {
+        private let encoding: R117Tokenizer.Encoding
+        private let source: [Unicode.Scalar]
+        private let predictor: AsyncModel
+
+        init(encoding: R117Tokenizer.Encoding, source: [Unicode.Scalar], model: MLModel) {
+            self.encoding = encoding
+            self.source = source
+            predictor = AsyncModel(model: model)
+        }
+
+        func last2(
+            spans: [Range<Int>], progress: (@Sendable (Int, Int) -> Void)? = nil
+        ) async throws -> [[Float]] {
+            try await R117SharedContextEncoder.last2(
+                encoding: encoding, source: source, spans: spans, progress: progress
+            ) { ids in
+                try await predictor.predict(ids)
+            }
+        }
+    }
+
     static func last2(
         encoding: R117Tokenizer.Encoding, source: [Unicode.Scalar], spans: [Range<Int>],
         model: MLModel, progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> [[Float]] {
-        let predictor = AsyncModel(model: model)
-        return try await last2(encoding: encoding, source: source, spans: spans,
-                               progress: progress) { ids in
-            try await predictor.predict(ids)
-        }
+        try await Prepared(encoding: encoding, source: source, model: model)
+            .last2(spans: spans, progress: progress)
     }
 
     static func last2(

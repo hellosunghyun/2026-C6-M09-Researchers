@@ -214,6 +214,11 @@ nonisolated final class R117Encoder {
         isolation: isolated (any Actor)? = #isolation,
         progress: (@Sendable (Int, Int) -> Void)? = nil
     ) async throws -> [[Float]] {
+        let prepared = try prepareShared(text: text)
+        return try await prepared.last2(spans: spans, progress: progress)
+    }
+
+    func prepareShared(text: String) throws -> R117SharedContextEncoder.Prepared {
         try Task.checkCancellation()
         let source = Array(text.unicodeScalars)
         let normalized = source.map { scalar -> Unicode.Scalar in
@@ -223,9 +228,7 @@ nonisolated final class R117Encoder {
         let encoding = try tokenizer.encode(String(String.UnicodeScalarView(normalized)))
         try Task.checkCancellation()
         let model = try runner.model(function: "teacher_last2")
-        return try await R117SharedContextEncoder.last2(
-            encoding: encoding, source: source, spans: spans, model: model, progress: progress
-        )
+        return R117SharedContextEncoder.Prepared(encoding: encoding, source: source, model: model)
     }
 
     func predict(model: MLModel, ids: [Int]) throws -> [[Float]] {
@@ -240,5 +243,44 @@ nonisolated final class R117Encoder {
         let left = sqrt(candidate.map { $0 * $0 }.reduce(Float(0), +))
         let right = sqrt(context.map { $0 * $0 }.reduce(Float(0), +))
         return candidate + product + [dot / (left * right + 1e-8)]
+    }
+}
+
+nonisolated extension R117Encoder {
+    struct EncodedDocuments: Sendable {
+        let original: Document
+        let teacher: Document
+    }
+
+    struct Timed<Value: Sendable>: Sendable {
+        let value: Value
+        let duration: Double
+    }
+
+    static func runDocuments(
+        original: R117DocumentEncoder.Prepared, teacher: R117DocumentEncoder.Prepared
+    ) async throws -> Timed<EncodedDocuments> {
+        let started = DispatchTime.now().uptimeNanoseconds
+        async let originalDocument = original.document()
+        async let teacherDocument = teacher.document()
+        let (first, second) = try await (originalDocument, teacherDocument)
+        try Task.checkCancellation()
+        return Timed(
+            value: EncodedDocuments(original: first, teacher: second),
+            duration: Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000_000
+        )
+    }
+
+    static func runShared(
+        prepared: R117SharedContextEncoder.Prepared, ranges: [Range<Int>],
+        progress: (@Sendable (Int, Int) -> Void)?
+    ) async throws -> Timed<[[Float]]> {
+        let started = DispatchTime.now().uptimeNanoseconds
+        let value = try await prepared.last2(spans: ranges, progress: progress)
+        try Task.checkCancellation()
+        return Timed(
+            value: value,
+            duration: Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000_000
+        )
     }
 }
