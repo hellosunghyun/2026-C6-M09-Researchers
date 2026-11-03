@@ -1,0 +1,50 @@
+name: Compiler cache timing experiment
+on:
+  push:
+    branches: [ci/cache-timing-experiment]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [baseline, compilation-cache]
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify toolchain
+        id: toolchain
+        run: |
+          echo "xcode=$(xcodebuild -version | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "arch=$(uname -m)" >> "$GITHUB_OUTPUT"
+      - name: Restore compilation cache
+        if: matrix.mode == 'compilation-cache'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/labcord-compilation-cache
+          key: compilation-cache-experiment-${{ runner.os }}-${{ steps.toolchain.outputs.arch }}-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}
+      - name: Build
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          args=()
+          if [ "$MODE" = compilation-cache ]; then
+            args+=(COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$RUNNER_TEMP/labcord-compilation-cache")
+          else
+            args+=(COMPILATION_CACHE_ENABLE_CACHING=NO)
+          fi
+          /usr/bin/time -p xcodebuild build \
+            -project Researchers.xcodeproj \
+            -scheme Researchers \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipMacroValidation \
+            -derivedDataPath "$RUNNER_TEMP/labcord-clean-derived" \
+            -showBuildTimingSummary ARCHS=arm64 "${args[@]}"
+      - name: Check architecture and cache size
+        run: |
+          app="$RUNNER_TEMP/labcord-clean-derived/Build/Products/Debug-iphonesimulator/Researchers.app"
+          lipo -archs "$app/Researchers"
+          lipo -archs "$app/Watch/ResearchWatch Watch App.app/ResearchWatch Watch App"
+          du -sh "$RUNNER_TEMP/labcord-compilation-cache" 2>/dev/null || true
