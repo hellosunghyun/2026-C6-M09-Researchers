@@ -71,8 +71,9 @@ private actor R117ExtractionRuntime {
         await progress?(.rankingCandidates(groups.count))
         try Task.checkCancellation()
         let result = try await score(ranker, text: text, spans: spans, progress: progress)
+        let sourceScalars = Array(text.unicodeScalars)
         let candidates = try groups.enumerated().map { index, group in
-            try group.selectionCandidate(index: index, source: text,
+            try group.selectionCandidate(index: index, sourceScalars: sourceScalars,
                                          frozenScore: result.frozenScores[index])
         }
         let selected = try R117Selector.select(

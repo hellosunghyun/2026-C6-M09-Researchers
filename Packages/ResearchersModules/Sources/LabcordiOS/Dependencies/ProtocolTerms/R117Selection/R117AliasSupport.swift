@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated enum R117AliasSupport {
+    private static let acronymRegex = try? NSRegularExpression(pattern: "[A-Za-z]+")
     private static let functionWords: Set<String> = [
         "of", "the", "and", "for", "in", "on", "with", "a", "an", "to"
     ]
@@ -101,7 +102,9 @@ nonisolated enum R117AliasSupport {
         guard (2...10).contains(letters.count), uppercase >= 2,
               !contains("[^A-Za-z0-9\\- ]", in: short), !contains("\\d", in: short),
               long.unicodeScalars.count > short.unicodeScalars.count else { return false }
-        let words = matches("[A-Za-z]+", in: long).compactMap { match -> String? in
+        let words = (acronymRegex?.matches(
+            in: long, range: NSRange(long.startIndex..., in: long)
+        ) ?? []).compactMap { match -> String? in
             guard let range = Range(match.range, in: long) else { return nil }
             return String(long[range])
         }

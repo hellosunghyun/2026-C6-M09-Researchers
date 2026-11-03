@@ -29,6 +29,13 @@ nonisolated struct R117ShortlistGroup: Sendable {
     func selectionCandidate(
         index: Int, source: String, frozenScore: Double
     ) throws -> R117SelectionCandidate {
+        try selectionCandidate(index: index, sourceScalars: Array(source.unicodeScalars),
+                               frozenScore: frozenScore)
+    }
+
+    func selectionCandidate(
+        index: Int, sourceScalars: [UnicodeScalar], frozenScore: Double
+    ) throws -> R117SelectionCandidate {
         let matching = mentions.filter {
             $0.surface.unicodeScalars.elementsEqual(text.unicodeScalars)
         }
@@ -36,8 +43,7 @@ nonisolated struct R117ShortlistGroup: Sendable {
             guard let best else { return mention }
             return mention.score > best.score ? mention : best
         }
-        let scalars = Array(source.unicodeScalars)
-        guard let start = chosen?.start ?? firstOccurrence(of: text, in: scalars) else {
+        guard let start = chosen?.start ?? firstOccurrence(of: text, in: sourceScalars) else {
             throw R117SelectionError.invalidSpan
         }
         return R117SelectionCandidate(

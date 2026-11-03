@@ -17,7 +17,7 @@ nonisolated enum R117Selector {
             else { break }
             selected.append(index)
             active[index] = false
-            for other in candidates.indices {
+            for other in candidates.indices where active[other] {
                 let similarity = overlap(candidates[other], candidates[index])
                 penalties[other] = max(penalties[other], similarity)
             }
