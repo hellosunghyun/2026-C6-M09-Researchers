@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [baseline, package, derived]
+        mode: [baseline, baseline2, derived]
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
@@ -20,20 +20,60 @@ jobs:
           xcodebuild -version
           echo "xcode=$(xcodebuild -version | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
           echo "arch=$(uname -m)" >> "$GITHUB_OUTPUT"
+          if [[ -n "${ImageOS:-}" && -n "${ImageVersion:-}" ]]; then
+            echo "cache_eligible=true" >> "$GITHUB_OUTPUT"
+            echo "image=$(printf '%s\n%s\n' "$ImageOS" "$ImageVersion" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          else
+            echo "cache_eligible=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sdks=$( { xcrun --sdk iphonesimulator --show-sdk-build-version; xcrun --sdk watchsimulator --show-sdk-build-version; } | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Fingerprint build inputs
+        id: inputs
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import hashlib
+          import os
+          import subprocess
+          from pathlib import Path
+
+          digest = hashlib.sha256()
+          paths = subprocess.check_output(['git', 'ls-files', '-z']).split(b'\0')
+          for raw in sorted(filter(None, paths)):
+              path = Path(os.fsdecode(raw))
+              # Swift source changes should use Xcode's incremental build logic;
+              # package manifests and every other tracked input invalidate the cache.
+              source_roots = ('Researchers/', 'ResearchWatchApp/', 'Packages/ResearchersModules/Sources/')
+              if path.suffix.lower() == '.swift' and path.as_posix().startswith(source_roots):
+                  continue
+              digest.update(len(raw).to_bytes(8, 'big'))
+              digest.update(raw)
+              if path.is_symlink():
+                  content = os.fsencode(os.readlink(path))
+                  digest.update(b'link\0' + len(content).to_bytes(8, 'big') + content)
+              else:
+                  digest.update(b'file\0')
+                  digest.update((path.stat().st_mode & 0o111).to_bytes(2, 'big'))
+                  file_digest = hashlib.sha256()
+                  with path.open('rb') as source:
+                      while chunk := source.read(1024 * 1024):
+                          file_digest.update(chunk)
+                  digest.update(file_digest.digest())
+          print('fingerprint=' + digest.hexdigest())
+          PY
       - name: Restore package cache
-        if: matrix.mode != 'baseline'
+        if: matrix.mode == 'derived'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/labcord-packages
           key: experiment-package-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-v1
       - name: Restore DerivedData cache
-        if: matrix.mode == 'derived'
+        if: matrix.mode == 'derived' && steps.environment.outputs.cache_eligible == 'true'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/labcord-derived
-          key: experiment-derived-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}-v1
+          key: experiment-derived-v2-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.image }}-${{ steps.environment.outputs.xcode }}-${{ steps.environment.outputs.sdks }}-${{ steps.inputs.outputs.fingerprint }}-${{ github.sha }}
           restore-keys: |
-            experiment-derived-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
+            experiment-derived-v2-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.image }}-${{ steps.environment.outputs.xcode }}-${{ steps.environment.outputs.sdks }}-${{ steps.inputs.outputs.fingerprint }}-
       - name: Build
         run: |
           /usr/bin/time -p xcodebuild build \
@@ -48,18 +88,19 @@ jobs:
         if: always()
         run: du -sh "$RUNNER_TEMP/labcord-packages" "$RUNNER_TEMP/labcord-derived" || true
       - name: Generate app file manifest
-        if: matrix.mode != 'package'
         run: |
           app="$RUNNER_TEMP/labcord-derived/Build/Products/Debug-iphonesimulator/Researchers.app"
           test -d "$app"
           cd "$app"
           python3 -c 'import hashlib, pathlib; [(print(hashlib.sha256(p.read_bytes()).hexdigest(), p.as_posix())) for p in sorted(pathlib.Path(".").rglob("*")) if p.is_file()]' > "$RUNNER_TEMP/${{ matrix.mode }}-manifest.txt"
+          { for binary in 'Researchers' 'Researchers.debug.dylib' 'Watch/ResearchWatch Watch App.app/ResearchWatch Watch App'; do echo "### $binary"; dwarfdump --uuid "$binary"; done; echo '### Signing'; codesign -dv --verbose=4 . 2>&1 || true; } > "$RUNNER_TEMP/${{ matrix.mode }}-metadata.txt"
       - name: Upload app file manifest
-        if: matrix.mode != 'package'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.mode }}-manifest
-          path: ${{ runner.temp }}/${{ matrix.mode }}-manifest.txt
+          path: |
+            ${{ runner.temp }}/${{ matrix.mode }}-manifest.txt
+            ${{ runner.temp }}/${{ matrix.mode }}-metadata.txt
   compare:
     needs: build
     runs-on: ubuntu-latest
@@ -70,16 +111,18 @@ jobs:
           merge-multiple: true
       - name: Compare manifests
         run: |
-          wc -l baseline-manifest.txt derived-manifest.txt
-          if diff -u baseline-manifest.txt derived-manifest.txt > differences.txt; then
-            echo 'All app files have matching SHA256 hashes.'
-          else
-            echo 'App manifests differ; differences are evidence for investigation, not a build failure.'
-            head -80 differences.txt
-          fi
+          wc -l *-manifest.txt
+          for variant in baseline2 derived; do
+            if diff -u baseline-manifest.txt "${variant}-manifest.txt" > "differences-${variant}.txt"; then
+              echo "$variant: all app files match"
+            else
+              echo "$variant: manifests differ; investigate before claiming equivalence"
+              head -80 "differences-${variant}.txt"
+            fi
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: manifest-comparison
           path: |
             *-manifest.txt
-            differences.txt
+            differences-*.txt
