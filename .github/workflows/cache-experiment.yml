@@ -47,3 +47,39 @@ jobs:
       - name: Cache sizes
         if: always()
         run: du -sh "$RUNNER_TEMP/labcord-packages" "$RUNNER_TEMP/labcord-derived" || true
+      - name: Generate app file manifest
+        if: matrix.mode != 'package'
+        run: |
+          app="$RUNNER_TEMP/labcord-derived/Build/Products/Debug-iphonesimulator/Researchers.app"
+          test -d "$app"
+          cd "$app"
+          python3 -c 'import hashlib, pathlib; [(print(hashlib.sha256(p.read_bytes()).hexdigest(), p.as_posix())) for p in sorted(pathlib.Path(".").rglob("*")) if p.is_file()]' > "$RUNNER_TEMP/${{ matrix.mode }}-manifest.txt"
+      - name: Upload app file manifest
+        if: matrix.mode != 'package'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.mode }}-manifest
+          path: ${{ runner.temp }}/${{ matrix.mode }}-manifest.txt
+  compare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-manifest'
+          merge-multiple: true
+      - name: Compare manifests
+        run: |
+          wc -l baseline-manifest.txt derived-manifest.txt
+          if diff -u baseline-manifest.txt derived-manifest.txt > differences.txt; then
+            echo 'All app files have matching SHA256 hashes.'
+          else
+            echo 'App manifests differ; differences are evidence for investigation, not a build failure.'
+            head -80 differences.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest-comparison
+          path: |
+            *-manifest.txt
+            differences.txt
