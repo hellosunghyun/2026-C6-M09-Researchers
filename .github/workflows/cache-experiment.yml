@@ -1,7 +1,5 @@
 name: Cache timing experiment
 on:
-  push:
-    branches: [ci/cache-timing-experiment]
   workflow_dispatch:
 permissions:
   contents: read

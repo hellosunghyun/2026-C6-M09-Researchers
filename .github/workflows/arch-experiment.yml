@@ -1,0 +1,34 @@
+name: Architecture timing experiment
+on:
+  push:
+    branches: [ci/cache-timing-experiment]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [baseline, arm64]
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          args=()
+          if [ "$MODE" = arm64 ]; then args+=(ARCHS=arm64); fi
+          /usr/bin/time -p xcodebuild build \
+            -project Researchers.xcodeproj \
+            -scheme Researchers \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipMacroValidation \
+            -derivedDataPath "$RUNNER_TEMP/labcord-arch-derived" \
+            -showBuildTimingSummary "${args[@]}"
+      - name: Inspect app architectures
+        run: |
+          app="$RUNNER_TEMP/labcord-arch-derived/Build/Products/Debug-iphonesimulator/Researchers.app"
+          lipo -archs "$app/Researchers"
+          lipo -archs "$app/Watch/ResearchWatch Watch App.app/ResearchWatch Watch App"
