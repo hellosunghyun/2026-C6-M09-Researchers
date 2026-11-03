@@ -30,7 +30,7 @@ struct ExperimentResultView: View {
     }
 
     private func formattedDates(_ dates: [Date]) -> String {
-        "[" + dates.map(formattedDate).joined(separator: ", ") + "]"
+        "[\(dates.map(formattedDate).joined(separator: ", "))]"
     }
 
     private var detailText: String {
@@ -118,4 +118,3 @@ struct ExperimentResultView: View {
         }
     )
 }
-// CI cache experiment: verify a Swift source change triggers incremental compilation.
