@@ -1,0 +1,47 @@
+name: Cache timing experiment
+on:
+  push:
+    branches: [ci/cache-timing-experiment]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [baseline, package, derived]
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environment
+        id: environment
+        run: |
+          xcodebuild -version
+          echo "xcode=$(xcodebuild -version | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "arch=$(uname -m)" >> "$GITHUB_OUTPUT"
+      - name: Restore package cache
+        if: matrix.mode != 'baseline'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/labcord-packages
+          key: experiment-package-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-v1
+      - name: Restore DerivedData cache
+        if: matrix.mode == 'derived'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/labcord-derived
+          key: experiment-derived-${{ runner.os }}-${{ steps.environment.outputs.arch }}-${{ steps.environment.outputs.xcode }}-${{ hashFiles('Researchers.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}-v1
+      - name: Build
+        run: |
+          /usr/bin/time -p xcodebuild build \
+            -project Researchers.xcodeproj \
+            -scheme Researchers \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipMacroValidation \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/labcord-packages" \
+            -derivedDataPath "$RUNNER_TEMP/labcord-derived" \
+            -showBuildTimingSummary
+      - name: Cache sizes
+        if: always()
+        run: du -sh "$RUNNER_TEMP/labcord-packages" "$RUNNER_TEMP/labcord-derived" || true
